@@ -396,3 +396,26 @@ input[type=range] { width: 100%; accent-color: var(--accent); padding: 0; backgr
 .cheat-row { display: flex; gap: 10px; align-items: flex-start; background: var(--bg2); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; cursor: pointer; }
 .cheat-row input { width: 18px; height: 18px; margin-top: 2px; accent-color: var(--gold); flex: none; }
 .cheat-tag { position: absolute; right: 12px; top: 10px; background: rgba(250, 204, 21, .15); border: 1px solid rgba(250, 204, 21, .5); color: var(--gold); font-weight: 800; font-size: 13px; padding: 4px 10px; border-radius: 10px; pointer-events: none; }
+
+/* имущество */
+.estate-top { display: flex; gap: 16px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.estate-sum { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
+.estate-sum > div { display: grid; }
+.estate-sum b { font-family: var(--head); font-size: 16px; }
+.estate-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.estate-card { background: var(--bg2); border: 1px solid var(--line); border-radius: 14px; padding: 12px; display: grid; gap: 8px; align-content: start; }
+.estate-card.flat { border-left: 3px solid #38bdf8; }
+.estate-card.biz { border-left: 3px solid var(--pink); }
+.estate-card .row { justify-content: space-between; }
+.estate-card .acts { justify-content: flex-start !important; }
+.estate-card.market { text-align: center; }
+.estate-card.market .est-emoji { font-size: 44px; line-height: 1.1; }
+.offers { display: grid; gap: 6px; }
+.offer { display: flex; justify-content: space-between; align-items: center; gap: 8px; text-align: left; background: rgba(139, 92, 246, .12); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
+.offer:hover { border-color: var(--accent); }
+.seg button { white-space: nowrap; }
+@media (max-width: 1700px) and (min-width: 761px) {
+  .top { flex-wrap: wrap; row-gap: 6px; }
+  .tabs { order: 3; flex-basis: 100%; }
+  .wallet { margin-left: auto; }
+}

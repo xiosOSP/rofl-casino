@@ -74,7 +74,7 @@ async function login(name) {
   S.offset = null; sync(r.serverNow);
   S.me = r.me; S.cases = r.cases; S.towerDiff = r.towerDiff; S.towerRows = r.towerRows;
   S.plane = r.plane; S.roul = r.roulette; S.minesSolo = r.mines; S.towersSolo = r.towers;
-  S.loanPlans = r.loanPlans; S.jobs = r.jobs; S.grandmaCd = r.grandmaCd; S.arrestMax = r.arrestMax; S.minuteMs = r.minuteMs;
+  S.propsCatalog = r.propsCatalog; S.maxProps = r.maxProps; S.loanPlans = r.loanPlans; S.jobs = r.jobs; S.grandmaCd = r.grandmaCd; S.arrestMax = r.arrestMax; S.minuteMs = r.minuteMs;
   S.cases.sort((a, b) => a.price - b.price);
   if (!S.built) buildUI();
   $('#login').classList.add('hidden'); $('#app').classList.remove('hidden');

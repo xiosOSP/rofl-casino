@@ -117,7 +117,8 @@ function withDefaults(u) {
   u.mom ??= []; u.history ??= []; u.jobCd ??= {}; u.job ??= null; u.grandmaAt ??= 0;
   u.admin ??= false; u.cheats ??= {};
   u.stats ??= {};
-  for (const k of ['borrowed', 'repaid', 'penalties', 'overdue', 'onTime', 'late', 'jobs', 'jobsEarned', 'grandma', 'confiscated', 'helped']) u.stats[k] ??= 0;
+  for (const k of ['borrowed', 'repaid', 'penalties', 'overdue', 'onTime', 'late', 'jobs', 'jobsEarned', 'grandma', 'confiscated', 'helped', 'propIncome', 'propSpent']) u.stats[k] ??= 0;
+  u.props ??= []; u.propSeq ??= 1;
   u.stats.games ??= {};
   delete u.refills;
   return u;
@@ -141,7 +142,8 @@ const momStage = (u) => activeLoans(u).reduce((s, l) => Math.max(s, loanStage(l)
 const publicUser = (u) => {
   const debt = debtOf(u);
   return {
-    name: u.name, balance: u.balance, debt, net: r2(u.balance - debt), trust: u.trust, stage: momStage(u),
+    name: u.name, balance: u.balance, debt, assets: assetsOf(u), props: u.props.length,
+    net: r2(u.balance - debt + assetsOf(u)), trust: u.trust, stage: momStage(u),
     best: u.best, wagered: u.wagered, lives: u.lives, online: (online.get(u.name) || 0) > 0,
   };
 };
@@ -150,6 +152,7 @@ const privateUser = (u) => ({
   limit: creditLimit(u),
   loans: u.loans, mom: u.mom, history: u.history, stats: u.stats,
   admin: u.admin, cheats: u.admin ? u.cheats : {},
+  estate: u.props.map((p) => propView(u, p)),
   job: u.job, jobCd: u.jobCd, grandmaAt: u.grandmaAt, lastLife: u.lastLife || null, serverNow: now(),
 });
 function pushUser(name) {
@@ -244,6 +247,116 @@ function closeLoan(u, l) {
   const closed = u.loans.filter((x) => x.status !== 'active');
   if (closed.length > 15) { const drop = new Set(closed.slice(15)); u.loans = u.loans.filter((x) => !drop.has(x)); }
 }
+// ───────────────────────── имущество ─────────────────────────
+const PROPS = {
+  room: { kind: 'flat', name: 'Комната в общаге', emoji: '🏚️', price: 25000, income: 200 },
+  studio: { kind: 'flat', name: 'Однушка в спальнике', emoji: '🏠', price: 80000, income: 650 },
+  center: { kind: 'flat', name: 'Двушка в центре', emoji: '🏢', price: 200000, income: 1700 },
+  penthouse: { kind: 'flat', name: 'Пентхаус в Сити', emoji: '🌆', price: 1000000, income: 8500 },
+  villa: { kind: 'flat', name: 'Вилла на море', emoji: '🏝️', price: 5000000, income: 45000 },
+  shawarma: { kind: 'biz', name: 'Шаурмичная', emoji: '🌯', price: 50000, income: 550 },
+  wash: { kind: 'biz', name: 'Автомойка', emoji: '🚗', price: 150000, income: 1600 },
+  club: { kind: 'biz', name: 'Компьютерный клуб', emoji: '🎮', price: 400000, income: 4300 },
+  bar: { kind: 'biz', name: 'Бар «У мамы»', emoji: '🍻', price: 1200000, income: 13000 },
+  casino: { kind: 'biz', name: 'Своё казино', emoji: '🎰', price: 4000000, income: 44000 },
+};
+const TENANTS = [
+  { name: 'Студент Вася', emoji: '🧑‍🎓', k: 0.8, risk: 0.12 },
+  { name: 'Семья с котом', emoji: '🐈', k: 1.0, risk: 0.03 },
+  { name: 'Айтишник на удалёнке', emoji: '🧑‍💻', k: 1.25, risk: 0.02 },
+  { name: 'Блогер', emoji: '🤳', k: 1.4, risk: 0.1 },
+  { name: 'Бабушка-одуванчик', emoji: '👵', k: 0.9, risk: 0 },
+  { name: 'Командировочный', emoji: '🧳', k: 1.1, risk: 0.05 },
+  { name: 'Рок-группа', emoji: '🎸', k: 1.5, risk: 0.18 },
+  { name: 'Подозрительный тип', emoji: '🕶️', k: 1.8, risk: 0.3 },
+];
+const MAX_PROPS = 12, CASH_CAP_MIN = 60, OFFERS_CD = 30000, SELL_K = 0.7;
+const maxLevel = (def) => (def.kind === 'flat' ? 3 : 5);
+const levelMult = (def, lvl) => 1 + (def.kind === 'flat' ? 0.25 : 0.5) * (lvl - 1);
+const upgradeCost = (def, lvl) => r2(def.price * (def.kind === 'flat' ? 0.3 : 0.4) * lvl);
+const sellPrice = (p) => r2((PROPS[p.type].price + p.spent) * SELL_K);
+function propRate(owner, p) { // ₽ за «минуту»
+  const def = PROPS[p.type];
+  if (def.kind === 'flat' && p.state !== 'rented') return 0;
+  let r = def.income * levelMult(def, p.level) * (def.kind === 'flat' ? p.tenant.k : 1);
+  if (cheatOn(owner, 'propBoost')) r *= 3;
+  return r2(r);
+}
+const propCap = (owner, p) => r2(Math.max(propRate(owner, p), PROPS[p.type].income * levelMult(PROPS[p.type], p.level)) * CASH_CAP_MIN);
+function accrue(owner, p, t = now()) {
+  const rate = propRate(owner, p);
+  if (rate > 0 && t > p.lastTick) p.cash = r2(Math.min(propCap(owner, p), p.cash + (rate * (t - p.lastTick)) / MIN));
+  p.lastTick = Math.max(p.lastTick, t);
+}
+const assetsOf = (u) => r2(u.props.reduce((s, p) => s + sellPrice(p), 0));
+function propView(u, p) {
+  const def = PROPS[p.type];
+  return {
+    id: p.id, type: p.type, level: p.level, state: p.state, tenant: p.tenant, rentUntil: p.rentUntil,
+    offers: p.offers, offersAt: p.offersAt, cash: p.cash, lastTick: p.lastTick,
+    rate: propRate(u.name, p), cap: propCap(u.name, p), sell: sellPrice(p),
+    upgrade: p.level < maxLevel(def) ? upgradeCost(def, p.level) : null, maxLevel: maxLevel(def),
+  };
+}
+function genOffers(def) {
+  return pickDistinct(TENANTS.length, 3).map((i) => ({ ...TENANTS[i], mins: 15 + randInt(26) }));
+}
+function propEvent(u, text, toFeed = false) {
+  io.to('u:' + u.name).emit('propEvent', { text });
+  if (toFeed) addFeed(text, 'mom');
+}
+// раз в «минуту» на каждый объект: конец договора, побеги жильцов, события бизнеса
+function propTick(u, t) {
+  let changed = false;
+  for (const p of u.props) {
+    const def = PROPS[p.type];
+    if (def.kind === 'flat' && p.state === 'rented' && t >= p.rentUntil) {
+      accrue(u.name, p, p.rentUntil);
+      propEvent(u, `📦 ${p.tenant.emoji} ${p.tenant.name} съехал(а) из «${def.name}». Пора искать новых жильцов.`);
+      p.state = 'free'; p.tenant = null; p.lastTick = t;
+      changed = true; continue;
+    }
+    if (t < p.nextCheck) continue;
+    p.nextCheck = t + MIN;
+    accrue(u.name, p, t);
+    if (def.kind === 'flat' && p.state === 'rented' && rnd() < p.tenant.risk * 0.15) {
+      const lost = p.cash;
+      propEvent(u, `🏃 ${p.tenant.emoji} ${p.tenant.name} сбежал(а) из «${def.name}» у ${u.name}, не заплатив ${rub(lost)}!`, true);
+      p.cash = 0; p.state = 'free'; p.tenant = null;
+      changed = true;
+    } else if (def.kind === 'biz' && rnd() < 0.03) {
+      const ev = randInt(3);
+      if (ev === 0) {
+        const loss = r2(p.cash * 0.25); p.cash = r2(p.cash - loss);
+        propEvent(u, `🧾 Налоговая проверка в «${def.name}»: −${rub(loss)} из кассы`);
+      } else if (ev === 1) {
+        const loss = r2(Math.min(p.cash, def.price * 0.05)); p.cash = r2(p.cash - loss);
+        propEvent(u, `🔧 Поломка в «${def.name}»: ремонт ${rub(loss)} из кассы`);
+      } else {
+        const bonus = r2(propRate(u.name, p) * 10);
+        p.cash = r2(Math.min(propCap(u.name, p), p.cash + bonus));
+        propEvent(u, `🌟 Ажиотаж в «${def.name}» у ${u.name}: +${rub(bonus)} в кассу`, true);
+      }
+      changed = true;
+    }
+  }
+  return changed;
+}
+function collectProps(u, list) {
+  const t = now();
+  let total = 0;
+  for (const p of list) { accrue(u.name, p, t); total = r2(total + p.cash); p.cash = 0; }
+  if (total <= 0) return { total: 0, taken: 0 };
+  let taken = 0;
+  if (momStage(u) >= 2) {
+    taken = r2(Math.min(total * 0.5, debtOf(u)));
+    if (taken > 0) { u.stats.confiscated = r2(u.stats.confiscated + taken); repayLoans(u, taken); io.to('u:' + u.name).emit('confiscated', { amount: taken }); }
+  }
+  u.balance = r2(u.balance + total - taken);
+  u.stats.propIncome = r2(u.stats.propIncome + total);
+  return { total, taken };
+}
+
 function momTick() {
   const t = now();
   for (const u of Object.values(db.users)) {
@@ -286,6 +399,7 @@ function momTick() {
         }
       }
     }
+    if (u.props.length && propTick(u, t)) changed = true;
     if (changed) { save(); pushUser(u.name); }
   }
 }
@@ -768,7 +882,7 @@ io.on('connection', (socket) => {
     broadcastPlayers();
     setTimeout(broadcastDuels, 0);
     return {
-      me: privateUser(u), feed, chat, loanPlans: LOAN_PLANS, jobs: JOBS, grandmaCd: GRANDMA_CD,
+      me: privateUser(u), feed, chat, propsCatalog: PROPS, maxProps: MAX_PROPS, loanPlans: LOAN_PLANS, jobs: JOBS, grandmaCd: GRANDMA_CD,
       arrestMax: ARREST_MAX, minuteMs: MIN, cases: CASES, towerDiff: TOWER_DIFF, towerRows: TOWER_ROWS,
       plane: planeView(), roulette: roulView(),
       mines: minesSoloView(me), towers: towersSoloView(me), serverNow: now(),
@@ -918,7 +1032,8 @@ io.on('connection', (socket) => {
   });
   on('cheat:toggle', ({ key, on: val }) => {
     const u = admin();
-    if (!['xray', 'crashSight', 'alwaysWin', 'topDrop'].includes(key)) throw new Error('Нет такого чита');
+    if (!['xray', 'crashSight', 'alwaysWin', 'topDrop', 'propBoost'].includes(key)) throw new Error('Нет такого чита');
+    if (key === 'propBoost') for (const p of u.props) accrue(me, p); // зафиксировать кассу по старой ставке
     u.cheats[key] = !!val;
     if (key === 'crashSight' && val && plane.phase === 'flying') cheatInfo(me, { plane: { round: plane.round, crash: plane.crash } });
     save(); pushUser(me); broadcastDuels();
@@ -929,6 +1044,82 @@ io.on('connection', (socket) => {
     save(); pushUser(me);
   });
 
+  // ── имущество
+  const myProp = (u, id) => {
+    const p = u.props.find((x) => x.id === Number(id));
+    if (!p) throw new Error('Объект не найден');
+    return p;
+  };
+  on('prop:buy', ({ type }) => {
+    const def = PROPS[type], u = U();
+    if (!def) throw new Error('Нет такого объекта');
+    if (u.props.length >= MAX_PROPS) throw new Error(`Не больше ${MAX_PROPS} объектов`);
+    if (momStage(u) >= 3) throw new Error('🔒 Домашний арест: мама не разрешает ничего покупать');
+    if (def.price > u.balance + 1e-9) throw new Error('Недостаточно средств');
+    u.balance = r2(u.balance - def.price);
+    u.stats.propSpent = r2(u.stats.propSpent + def.price);
+    const t = now();
+    const p = { id: u.propSeq++, type, level: 1, spent: 0, cash: 0, lastTick: t, nextCheck: t + MIN, boughtAt: t,
+      state: def.kind === 'flat' ? 'free' : 'working', tenant: null, rentUntil: 0, offers: null, offersAt: 0 };
+    u.props.push(p);
+    addFeed(`🏢 ${me} покупает ${def.emoji} «${def.name}» за ${rub(def.price)}`, 'win');
+    save(); pushUser(me);
+    return { id: p.id };
+  });
+  on('prop:offers', ({ id }) => {
+    const u = U(), p = myProp(u, id), def = PROPS[p.type];
+    if (def.kind !== 'flat') throw new Error('Бизнес не сдаётся');
+    if (p.state === 'rented') throw new Error('Квартира уже сдана');
+    if (p.offers && now() < p.offersAt + OFFERS_CD) throw new Error('Новые жильцы появятся чуть позже');
+    p.offers = genOffers(def); p.offersAt = now();
+    save(); pushUser(me);
+  });
+  on('prop:rent', ({ id, idx }) => {
+    const u = U(), p = myProp(u, id);
+    if (p.state === 'rented') throw new Error('Квартира уже сдана');
+    const o = p.offers && p.offers[clampInt(idx, 0, 2, 0)];
+    if (!o) throw new Error('Сначала найди жильцов');
+    const t = now();
+    p.state = 'rented'; p.tenant = { name: o.name, emoji: o.emoji, k: o.k, risk: o.risk };
+    p.rentUntil = t + o.mins * MIN; p.lastTick = t; p.nextCheck = t + MIN; p.offers = null;
+    save(); pushUser(me);
+  });
+  on('prop:evict', ({ id }) => {
+    const u = U(), p = myProp(u, id);
+    if (p.state !== 'rented') throw new Error('Там никто не живёт');
+    accrue(me, p); p.state = 'free'; p.tenant = null;
+    save(); pushUser(me);
+  });
+  on('prop:collect', ({ id }) => {
+    const u = U();
+    const list = id === 'all' ? u.props : [myProp(u, id)];
+    const r = collectProps(u, list);
+    if (!r.total) throw new Error('Касса пуста');
+    save(); pushUser(me);
+    return r;
+  });
+  on('prop:upgrade', ({ id }) => {
+    const u = U(), p = myProp(u, id), def = PROPS[p.type];
+    if (p.level >= maxLevel(def)) throw new Error('Уже максимальный уровень');
+    const cost = upgradeCost(def, p.level);
+    if (cost > u.balance + 1e-9) throw new Error('Недостаточно средств');
+    accrue(me, p);
+    u.balance = r2(u.balance - cost); u.stats.propSpent = r2(u.stats.propSpent + cost);
+    p.spent = r2(p.spent + cost); p.level++;
+    save(); pushUser(me);
+    return { level: p.level };
+  });
+  on('prop:sell', ({ id }) => {
+    const u = U(), p = myProp(u, id), def = PROPS[p.type];
+    const { total } = collectProps(u, [p]);
+    const price = sellPrice(p);
+    u.balance = r2(u.balance + price);
+    u.props = u.props.filter((x) => x !== p);
+    addFeed(`💼 ${me} продаёт ${def.emoji} «${def.name}» за ${rub(price)}`);
+    save(); pushUser(me);
+    return { price, cash: total };
+  });
+
   // ── начать новую жизнь: свой прогресс с нуля
   on('life:restart', () => {
     const u = U();
@@ -937,7 +1128,7 @@ io.on('connection', (socket) => {
     if (plane.bets[me] && !plane.bets[me].cashedAt && plane.phase !== 'crashed') throw new Error('Дождись конца раунда самолётика');
     if (roul.phase !== 'result' && roul.bets.some((b) => b.name === me)) throw new Error('Дождись конца раунда рулетки');
     if (casePending.get(me) > 0) throw new Error('Дождись, пока докрутится кейс');
-    const prev = { net: r2(u.balance - debtOf(u)), debt: debtOf(u), endedAt: now(), life: u.lives };
+    const prev = { net: r2(u.balance - debtOf(u) + assetsOf(u)), debt: debtOf(u), endedAt: now(), life: u.lives };
     const keep = { name: u.name, token: u.token, createdAt: u.createdAt, grandmaAt: u.grandmaAt, lives: u.lives + 1, lastLife: prev, admin: u.admin, cheats: u.cheats };
     for (const k of Object.keys(u)) delete u[k];
     Object.assign(u, keep);

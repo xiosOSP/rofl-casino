@@ -90,6 +90,7 @@ function titlesOf(p) {
   if (p.net < 0) t.push('🕳️ В минусе');
   if (p.best >= 100) t.push('🚀 Ракетчик');
   if (p.lives > 1) t.push(`♻️ Жизнь №${p.lives}`);
+  if (p.assets >= 1e6) t.push('🏢 Рантье');
   return t.join(' ');
 }
 
@@ -127,7 +128,7 @@ function v2Build() {
 
   $('#tab-stats').innerHTML = `
     <div class="panel"><h2>🏆 Рейтинг</h2><div class="table-wrap"><table class="tbl" id="rankTbl"></table></div>
-      <div class="rules" style="margin-top:10px">Капитал = баланс − долг маме. Именно он решает, кто круче.</div></div>
+      <div class="rules" style="margin-top:10px">Капитал = баланс − долг маме + имущество (по цене продажи). Именно он решает, кто круче.</div></div>
     <div class="grid-eq">
       <div class="panel"><h3>Моя статистика</h3><div class="table-wrap"><table class="tbl" id="myStats"></table></div><div class="kv" id="myMomStats"></div></div>
       <div class="panel"><h3>Последние ставки</h3><div id="myHistory" class="bets-table" style="max-height:520px"></div></div>
@@ -353,10 +354,10 @@ function v2Frame() {
 // ───────────────────────── рейтинг и статистика ─────────────────────────
 function renderRank() {
   if (!v2Built) return;
-  $('#rankTbl').innerHTML = `<tr><th>#</th><th>Игрок</th><th class="num">Капитал</th><th class="num">Баланс</th><th class="num">Долг маме</th><th class="num">🤝</th><th class="num">Рекорд</th><th>Статус</th></tr>` +
+  $('#rankTbl').innerHTML = `<tr><th>#</th><th>Игрок</th><th class="num">Капитал</th><th class="num">Баланс</th><th class="num">Долг маме</th><th class="num">Имущество</th><th class="num">🤝</th><th class="num">Рекорд</th><th>Статус</th></tr>` +
     S.players.map((p, i) => `<tr class="${p.name === me() ? 'me' : ''}"><td>${['🥇', '🥈', '🥉'][i] || i + 1}</td>
       <td><b>${esc(p.name)}</b> ${p.online ? '🟢' : ''}</td><td class="num ${p.net < 0 ? 'neg' : ''}"><b>${rub(p.net)}</b></td>
-      <td class="num">${rub(p.balance)}</td><td class="num ${p.debt ? 'neg' : ''}">${p.debt ? rub(p.debt) : '—'}</td>
+      <td class="num">${rub(p.balance)}</td><td class="num ${p.debt ? 'neg' : ''}">${p.debt ? rub(p.debt) : '—'}</td><td class="num">${p.assets ? `${rub(p.assets)} <span class="muted small">(${p.props})</span>` : '—'}</td>
       <td class="num">${p.trust}</td><td class="num">${p.best ? '×' + p.best.toFixed(2) : '—'}</td><td>${titlesOf(p)}</td></tr>`).join('');
 }
 function renderMyStats() {
@@ -374,7 +375,8 @@ function renderMyStats() {
       : '<tr><td colspan="6" class="muted">Ещё не играл(а)</td></tr>');
   const kv = [['Занято у мамы', rub(st.borrowed)], ['Возвращено маме', rub(st.repaid)], ['Пени набежало', rub(st.penalties)],
     ['Мама конфисковала', rub(st.confiscated)], ['Вернул(а) вовремя / с просрочкой', `${st.onTime} / ${st.late}`], ['Просрочек всего', st.overdue],
-    ['Подработок', `${st.jobs} (+${rub(st.jobsEarned)})`], ['От бабушки', rub(st.grandma)], ['Закрыто долгов друзей', rub(st.helped)]];
+    ['Подработок', `${st.jobs} (+${rub(st.jobsEarned)})`], ['От бабушки', rub(st.grandma)], ['Закрыто долгов друзей', rub(st.helped)],
+    ['Вложено в имущество', rub(st.propSpent || 0)], ['Доход с имущества', rub(st.propIncome || 0)]];
   $('#myMomStats').innerHTML = kv.map(([k, v]) => `<span class="muted">${k}</span><b>${v}</b>`).join('');
   const h = S.me.history;
   $('#myHistory').innerHTML = h.length ? h.map((x) => {
