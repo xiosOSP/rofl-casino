@@ -89,6 +89,7 @@ function titlesOf(p) {
   if (p.trust >= 90) t.push('🥰 Любимчик мамы');
   if (p.net < 0) t.push('🕳️ В минусе');
   if (p.best >= 100) t.push('🚀 Ракетчик');
+  if (p.lives > 1) t.push(`♻️ Жизнь №${p.lives}`);
   return t.join(' ');
 }
 
@@ -106,6 +107,12 @@ function v2Build() {
         <div class="progress trust-bar"><div id="momTrustBar"></div></div>
         <div class="row"><span>Долг: <b id="momDebt"></b></span><span>Лимит: <b id="momLimit"></b></span></div>
       </div>
+    </div>
+    <div class="panel newlife">
+      <div><b>♻️ Начать новую жизнь</b> <span class="badge" id="lifeNo"></span>
+        <div class="small muted">Баланс снова 10 000 ₽, мама прощает долги, доверие 60, статистика и история с нуля. В рейтинге все увидят номер твоей жизни.</div>
+        <div class="small muted" id="lastLife"></div></div>
+      <button class="btn red" data-act="newLife">♻️ Начать заново</button>
     </div>
     <div class="mom-grid">
       <div class="panel"><h3>Мои долги</h3><div id="momLoans" class="plans"></div></div>
@@ -207,6 +214,8 @@ function renderMomTop() {
   $('#momTrustBar').style.width = u.trust + '%';
   $('#momDebt').textContent = rub(debt);
   $('#momLimit').textContent = rub(u.limit);
+  $('#lifeNo').textContent = `сейчас жизнь №${u.lives}`;
+  $('#lastLife').textContent = u.lastLife ? `Прошлая жизнь №${u.lastLife.life} закончилась с капиталом ${rub(u.lastLife.net)}${u.lastLife.debt ? ` (долг маме ${rub(u.lastLife.debt)})` : ''}.` : '';
   $('#momRules').innerHTML = `Срок вышел → <b>📞</b> пеня 3% в минуту и новые займы запрещены.<br>
     Через ${minTxt(3)} → <b>😡</b> мама забирает 50% прибыли с выигрышей.<br>
     Через ${minTxt(10)} → <b>🔒</b> ставки не больше ${rub(S.arrestMax || 1000)}.<br>
@@ -424,6 +433,13 @@ ARENA.coin = (d, el) => {
 // ───────────────────────── действия ─────────────────────────
 Object.assign(ACT, {
   gomom() { setTab('mom'); },
+  async newLife() {
+    const u = S.me;
+    const msg = `Начать новую жизнь №${u.lives + 1}?\n\n• Баланс станет 10 000 ₽ (сейчас ${rub(u.balance)})\n• Долги маме спишутся (${rub(u.debt)})\n• Доверие мамы — 60, статистика и история — с нуля\n\nВернуть прошлую жизнь будет нельзя.`;
+    if (!confirm(msg)) return;
+    const r = await emit('life:restart');
+    if (r) { toast(`♻️ Добро пожаловать в жизнь №${r.lives}!`, 'ok'); confetti(60); lastHistT = 0; diceHist.length = 0; }
+  },
   async loan(b) {
     const r = await emit('mom:loan', { plan: b.dataset.plan });
     if (r) Snd.play('coin');

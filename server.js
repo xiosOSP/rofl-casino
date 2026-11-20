@@ -103,11 +103,12 @@ const MOM_LINES = {
   refuse: ['Хватит с тебя. Сначала верни старое.'],
   job: ['Спасибо за помощь! Держи {pay}.', 'Вот это я понимаю — полезный ребёнок. +{pay}.'],
   helped: ['Передай другу спасибо, он(а) закрыл(а) {amount} твоего долга.'],
+  newLife: ['Ладно. Начнём с чистого листа. Но я всё помню.', 'Новая жизнь? Хорошо. Только в казино больше ни-ни... ну ты понял(а).', 'Долги прощаю. Один раз. Ну, может, два.', 'Ох... Ладно, держи 10 000 ₽ и начинай заново.'],
 };
 
 // ───────────────────────── игроки ─────────────────────────
 function withDefaults(u) {
-  u.balance ??= START_BALANCE; u.wagered ??= 0; u.best ??= 0;
+  u.balance ??= START_BALANCE; u.wagered ??= 0; u.best ??= 0; u.lives ??= 1;
   u.trust ??= START_TRUST; u.loans ??= []; u.loanSeq ??= 1;
   u.mom ??= []; u.history ??= []; u.jobCd ??= {}; u.job ??= null; u.grandmaAt ??= 0;
   u.stats ??= {};
@@ -133,14 +134,14 @@ const publicUser = (u) => {
   const debt = debtOf(u);
   return {
     name: u.name, balance: u.balance, debt, net: r2(u.balance - debt), trust: u.trust, stage: momStage(u),
-    best: u.best, wagered: u.wagered, online: (online.get(u.name) || 0) > 0,
+    best: u.best, wagered: u.wagered, lives: u.lives, online: (online.get(u.name) || 0) > 0,
   };
 };
 const privateUser = (u) => ({
   ...publicUser(u),
   limit: creditLimit(u),
   loans: u.loans, mom: u.mom, history: u.history, stats: u.stats,
-  job: u.job, jobCd: u.jobCd, grandmaAt: u.grandmaAt, serverNow: now(),
+  job: u.job, jobCd: u.jobCd, grandmaAt: u.grandmaAt, lastLife: u.lastLife || null, serverNow: now(),
 });
 function pushUser(name) {
   const u = db.users[name];
@@ -423,6 +424,7 @@ for (const c of CASES) {
   }
 }
 const caseById = (id) => CASES.find((c) => c.id === id);
+const casePending = new Map(); // name -> сколько кейсов ещё крутится
 function rollCase(c) {
   const W = c.items.reduce((s, i) => s + i.w, 0);
   let x = rnd() * W;
@@ -860,6 +862,25 @@ io.on('connection', (socket) => {
     return { amount };
   });
 
+  // ── начать новую жизнь: свой прогресс с нуля
+  on('life:restart', () => {
+    const u = U();
+    if (activeDuelOf(me)) throw new Error('Сначала доиграй или отмени дуэль');
+    if (minesSolo[me] || towersSolo[me]) throw new Error('Сначала закончи текущую игру в минах или башнях');
+    if (plane.bets[me] && !plane.bets[me].cashedAt && plane.phase !== 'crashed') throw new Error('Дождись конца раунда самолётика');
+    if (roul.phase !== 'result' && roul.bets.some((b) => b.name === me)) throw new Error('Дождись конца раунда рулетки');
+    if (casePending.get(me) > 0) throw new Error('Дождись, пока докрутится кейс');
+    const prev = { net: r2(u.balance - debtOf(u)), debt: debtOf(u), endedAt: now(), life: u.lives };
+    const keep = { name: u.name, token: u.token, createdAt: u.createdAt, grandmaAt: u.grandmaAt, lives: u.lives + 1, lastLife: prev };
+    for (const k of Object.keys(u)) delete u[k];
+    Object.assign(u, keep);
+    withDefaults(u);
+    momSay(u, 'newLife');
+    addFeed(`♻️ ${me} начинает новую жизнь №${u.lives}. Прошлая закончилась с капиталом ${rub(prev.net)}${prev.debt ? ` и долгом маме ${rub(prev.debt)}` : ''}`, 'refill');
+    save(); pushUser(me);
+    return { lives: u.lives };
+  });
+
   on('transfer', ({ to, amount }) => {
     amount = parseBet(amount);
     if (!db.users[to] || to === me) throw new Error('Кому переводим?');
@@ -964,7 +985,9 @@ io.on('connection', (socket) => {
     placeBet(me, c.price, 'cases');
     const it = rollCase(c);
     const name = me;
+    casePending.set(name, (casePending.get(name) || 0) + 1);
     setTimeout(() => {
+      casePending.set(name, casePending.get(name) - 1);
       settle(name, 'cases', c.price, it.value, it.value / c.price);
       if (it.value >= c.price * 5) addFeed(`📦 ${name}: ${it.emoji} ${it.name} (${rub(it.value)}) из кейса «${c.name}»`, 'win');
     }, CASE_SPIN_MS);
