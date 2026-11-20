@@ -353,8 +353,11 @@ $('#trBtn').onclick = async () => {
 $('#chatForm').onsubmit = (e) => {
   e.preventDefault();
   const t = $('#chatInput').value.trim();
-  if (t) emit('chat', { text: t });
   $('#chatInput').value = '';
+  if (t) emit('chat', { text: t }).then((r) => {
+    if (r && r.cheat === 'on') { toast('🕶️ Читы включены. Кнопка 🕶️ — в шапке', 'ok'); setTab('cheats'); }
+    if (r && r.cheat === 'off') { toast('Читы выключены'); setTab('crash'); }
+  });
 };
 
 // ───────────────────────── общие события ─────────────────────────
@@ -506,6 +509,7 @@ const ARENA = {
       const p = s.p[viewer];
       const opened = new Set(p.opened || []);
       const field = new Set(s.field || []);
+      const xray = new Set(s.xray || []);
       const done = d.status === 'done';
       const canPlay = !done && mineIn && p.status === 'playing';
       html += `<div style="margin-top:14px">${mineIn ? '' : `<div class="muted" style="text-align:center;margin-bottom:6px">Поле игрока ${esc(viewer)}</div>`}<div class="mines-grid">${range(0, 24).map((i) => {
@@ -514,6 +518,7 @@ const ARENA = {
         else if (p.hit === i) { cls = 'bomb hit'; ch = '💣'; }
         else if (done && field.has(i)) { cls = 'bomb dim'; ch = '💣'; }
         else if (done || p.status !== 'playing') { cls = 'dim'; }
+        else if (xray.has(i)) { cls = 'xr'; }
         return `<button class="cell ${cls}" ${canPlay && !opened.has(i) ? `data-act="dmine" data-c="${i}"` : 'disabled'}>${ch}</button>`;
       }).join('')}</div></div>`;
       if (canPlay) {
@@ -540,7 +545,7 @@ const ARENA = {
       const done = d.status === 'done';
       const canPlay = !done && mineIn && p.status === 'playing';
       html += `<div style="margin-top:14px">${mineIn ? '' : `<div class="muted" style="text-align:center;margin-bottom:6px">Башня игрока ${esc(viewer)}</div>`}
-        ${towerHTML({ diff: d.config.diff, picks: p.picks || [], hit: p.hit, layout: s.layout, active: canPlay, act: 'dtower', showMult: false })}</div>`;
+        ${towerHTML({ diff: d.config.diff, picks: p.picks || [], hit: p.hit, layout: s.layout, active: canPlay, act: 'dtower', showMult: false, xray: s.xray })}</div>`;
       if (canPlay) {
         html += `<div class="row" style="margin-top:14px;justify-content:center">
           <button class="btn green" data-act="dstop" data-id="${d.id}" ${p.level ? '' : 'disabled'}>✋ Стоп — зафиксировать ${p.level} этаж</button>
@@ -667,8 +672,9 @@ function renderMinesSolo() {
   if (!grid) return;
   const opened = new Set(s ? s.opened : L ? L.opened : []);
   const field = new Set(L ? L.field : []);
+  const xray = new Set((s && s.xray) || []);
   grid.innerHTML = range(0, 24).map((i) => {
-    let cls = '', ch = '';
+    let cls = xray.has(i) ? 'xr' : '', ch = '';
     const isNew = i === S.minesNew ? ' new' : '';
     if (opened.has(i)) { cls = 'gem' + isNew; ch = '💎'; }
     else if (L && field.has(i)) { cls = 'bomb ' + (L.hit === i ? 'hit' + isNew : 'dim'); ch = '💣'; }
@@ -714,6 +720,7 @@ function towerHTML(o) {
       else if (o.hit && o.hit.row === row && o.hit.col === col) { cls = 'bomb hit'; ch = '💣'; }
       else if (o.layout) { cls = bomb ? 'bomb dim' : 'dim'; ch = bomb ? '💣' : ''; }
       else if (row < level) cls = 'dim';
+      else if (o.xray && o.xray[row].includes(col)) cls = 'xr';
       html += `<button class="tcell ${cls}" ${cur ? `data-act="${o.act}" data-c="${col}"` : 'disabled'}>${ch}</button>`;
     }
     html += '</div></div>';
@@ -737,7 +744,7 @@ function renderTowersSolo() {
     picks: s ? s.picks : L && L.diff === diff ? L.picks : [],
     hit: L && !s && L.diff === diff ? L.hit : null,
     layout: L && !s && L.diff === diff ? L.layout : null,
-    active: !!s, act: 'tpick', showMult: true, bet: s ? s.bet : bet,
+    active: !!s, act: 'tpick', showMult: true, bet: s ? s.bet : bet, xray: s ? s.xray : null,
   });
   const btn = $('#tBtn');
   $('#tBet').disabled = !!s;

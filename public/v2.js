@@ -174,6 +174,7 @@ function v2OnMe() {
   }
   renderMomAll();
   renderMyStats();
+  renderCheats();
 }
 socket.on('mom', (m) => toast('👩 Мама: ' + m.text, 'mom'));
 socket.on('confiscated', ({ amount }) => toast(`😡 Мама забрала ${rub(amount)} из выигрыша в счёт долга`, 'bad'));
@@ -304,7 +305,7 @@ function renderLoanHistory() {
   if (!changed('lhist', list.map((l) => l.id))) return;
   $('#momHistory').innerHTML = list.length ? list.map((l) => `<div class="hist-loan">
     <span>${l.emoji} ${esc(l.name)} <span class="muted small">${timeHM(l.takenAt)}</span></span>
-    <span>${rub(l.principal)} → ${rub(l.paid)} ${l.wasOverdue ? '<b class="neg">⚠️ с просрочкой</b>' : '<b class="pos">✅ вовремя</b>'}</span></div>`).join('')
+    <span>${rub(l.principal)} → ${rub(l.paid)} ${l.forgiven ? '<b class="pos">🕶️ прощён</b>' : l.wasOverdue ? '<b class="neg">⚠️ с просрочкой</b>' : '<b class="pos">✅ вовремя</b>'}</span></div>`).join('')
     : '<div class="muted">Пока пусто.</div>';
 }
 
@@ -342,6 +343,7 @@ function updateTimers(force) {
 }
 function v2Frame() {
   updateTimers(false);
+  updateCheatTags();
   if (S.tab === 'mom' && v2Built && Date.now() - (v2Frame.last || 0) > 500) {
     v2Frame.last = Date.now();
     renderMomTop(); renderLoans(); renderPlans(); renderJobs(); renderGrandma();
@@ -496,3 +498,77 @@ Object.assign(ACT, {
 // пересчитать выплату в костях после кнопок ½ / ×2 / Всё
 const _betq = ACT.betq;
 ACT.betq = (b) => { _betq(b); if (b.dataset.t === 'dBet') renderDice(); };
+
+// ───────────────────────── 🕶️ читы (видны только админу) ─────────────────────────
+// Включаются командой в чате: /читы КОД (код печатается в консоли сервера). Выключить: /читы выкл
+S.cheatPlane = null;
+socket.on('cheatInfo', (d) => { if (d.plane) S.cheatPlane = d.plane; });
+const CHEAT_TOGGLES = [
+  ['xray', '🩻 Рентген', 'Подсвечивает мины и бомбы красной рамкой: мины и башни, соло и дуэли'],
+  ['crashSight', '🔮 Видеть краш', 'Показывает, на каком иксе улетит самолётик и крашнется краш 1×1'],
+  ['alwaysWin', '🍀 Всегда везёт', 'Кости всегда в зоне выигрыша, монетка всегда за тебя'],
+  ['topDrop', '💎 Топ-дроп', 'Из кейсов и в кейс-батле всегда выпадает самый дорогой предмет'],
+];
+function ensureCheatUI() {
+  if (!$('#cheatBtn')) {
+    $('#soundBtn').insertAdjacentHTML('beforebegin', '<button class="btn small icon hidden" id="cheatBtn" title="Читы">🕶️</button>');
+    $('#cheatBtn').onclick = () => setTab('cheats');
+  }
+  if (!$('#tab-cheats')) $('#main').insertAdjacentHTML('beforeend', '<section class="tab" id="tab-cheats"></section>');
+}
+function renderCheats() {
+  ensureCheatUI();
+  const on = !!(S.me && S.me.admin);
+  $('#cheatBtn').classList.toggle('hidden', !on);
+  if (!on) { if (S.tab === 'cheats') setTab('crash'); $('#tab-cheats').innerHTML = ''; sigs.cheats = null; return; }
+  const c = S.me.cheats || {};
+  if (!changed('cheats', c)) return;
+  $('#tab-cheats').innerHTML = `
+    <div class="panel cheat-panel"><h2>🕶️ Читы</h2>
+      <div class="rules">Видно только тебе. Действия читов не пишутся в ленту. Выключить: напиши в чате <b>/читы выкл</b>.</div></div>
+    <div class="mom-grid">
+      <div class="panel"><h3>💰 Деньги</h3>
+        <div class="row"><input id="chAmount" type="number" placeholder="Сумма, ₽" value="100000">
+          <button class="btn small green" data-act="cheatMoney" data-mode="add">+ Добавить</button>
+          <button class="btn small" data-act="cheatMoney" data-mode="set">= Сделать баланс</button></div>
+        <div class="row" style="margin-top:8px">
+          <button class="btn small" data-act="cheatForgive">🧾 Мама прощает все долги</button>
+          <button class="btn small" data-act="cheatTrust">🥰 Доверие мамы 100</button>
+          <button class="btn small" data-act="cheatCd">⏩ Сбросить подработку и бабушку</button></div></div>
+      <div class="panel"><h3>🎯 Подкрутка</h3><div class="plans">${CHEAT_TOGGLES.map(([k, n, d]) => `
+        <label class="cheat-row"><input type="checkbox" data-cheat="${k}" ${c[k] ? 'checked' : ''}><span><b>${n}</b><br><span class="small muted">${d}</span></span></label>`).join('')}
+      </div></div>
+      <div class="panel"><h3>🎡 Рулетка: следующее число</h3>
+        <div class="row"><select id="chRoul">${range(0, 36).map((n) => `<option value="${n}">${n} ${colorOf(n) === 'red' ? '🔴' : colorOf(n) === 'black' ? '⚫' : '🟢'}</option>`).join('')}</select>
+          <button class="btn small primary" data-act="cheatRoul">Подкрутить</button>
+          <button class="btn small" data-act="cheatRoulClear">Сбросить</button></div>
+        <div class="small muted" style="margin-top:8px">${Number.isInteger(c.rouletteNext) ? `В следующем раунде выпадет <b>${c.rouletteNext}</b> — ставь заранее.` : 'Сейчас рулетка честная.'}</div></div>
+    </div>`;
+}
+document.addEventListener('change', (e) => {
+  const k = e.target.dataset && e.target.dataset.cheat;
+  if (k) emit('cheat:toggle', { key: k, on: e.target.checked });
+});
+function cheatTag(wrap, id, text) {
+  if (!wrap) return;
+  let el = document.getElementById(id);
+  if (!text) { if (el) el.remove(); return; }
+  if (!el) { wrap.insertAdjacentHTML('beforeend', `<div class="cheat-tag" id="${id}"></div>`); el = document.getElementById(id); }
+  if (el.textContent !== text) el.textContent = text;
+}
+function updateCheatTags() {
+  const pw = $('#pCv') && $('#pCv').parentElement, cw = $('#crCv') && $('#crCv').parentElement;
+  if (!S.me || !S.me.admin || !S.me.cheats.crashSight) { cheatTag(pw, 'pCheat', ''); cheatTag(cw, 'crCheat', ''); return; }
+  const p = S.plane;
+  cheatTag(pw, 'pCheat', p && p.phase === 'flying' && S.cheatPlane && S.cheatPlane.round === p.round ? `🔮 улетит на ×${S.cheatPlane.crash.toFixed(2)}` : '');
+  const d = viewDuel('crash');
+  cheatTag(cw, 'crCheat', d && d.state && d.state.sight ? `🔮 краш на ×${d.state.sight.toFixed(2)}` : '');
+}
+Object.assign(ACT, {
+  cheatMoney(b) { emit('cheat:money', { amount: $('#chAmount').value, mode: b.dataset.mode }).then((r) => r && toast('💰 Готово', 'ok')); },
+  cheatForgive() { emit('cheat:forgive').then((r) => r && toast('🧾 Долги прощены', 'ok')); },
+  cheatTrust() { emit('cheat:trust').then((r) => r && toast('🥰 Доверие 100', 'ok')); },
+  cheatCd() { emit('cheat:cooldowns').then((r) => r && toast('⏩ Перезарядки сброшены', 'ok')); },
+  cheatRoul() { emit('cheat:roulette', { n: Number($('#chRoul').value) }); },
+  cheatRoulClear() { emit('cheat:roulette', { n: null }); },
+});

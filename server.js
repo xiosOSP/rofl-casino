@@ -60,6 +60,10 @@ if (db.version !== DATA_VERSION || !db.users) {
   console.log('🧹 Новая версия данных — балансы и статистика начинаются с нуля');
   db = { version: DATA_VERSION, users: {} };
 }
+// секретный код читов: печатается только в консоли сервера (её видит лишь хозяин ПК)
+if (!db.cheatCode) db.cheatCode = String(100000 + randInt(900000));
+const CHEAT_CODE = String(process.env.CHEAT_CODE || db.cheatCode);
+const cheatFails = new Map(); // ник -> неудачные попытки ввести код (5 ошибок = блок на 10 минут)
 let saveTimer = null;
 function save() {
   clearTimeout(saveTimer);
@@ -111,6 +115,7 @@ function withDefaults(u) {
   u.balance ??= START_BALANCE; u.wagered ??= 0; u.best ??= 0; u.lives ??= 1;
   u.trust ??= START_TRUST; u.loans ??= []; u.loanSeq ??= 1;
   u.mom ??= []; u.history ??= []; u.jobCd ??= {}; u.job ??= null; u.grandmaAt ??= 0;
+  u.admin ??= false; u.cheats ??= {};
   u.stats ??= {};
   for (const k of ['borrowed', 'repaid', 'penalties', 'overdue', 'onTime', 'late', 'jobs', 'jobsEarned', 'grandma', 'confiscated', 'helped']) u.stats[k] ??= 0;
   u.stats.games ??= {};
@@ -129,6 +134,9 @@ function loanStage(l, t = now()) {
   const m = (t - l.dueAt) / MIN;
   return m >= STAGE_MIN[3] ? 3 : m >= STAGE_MIN[2] ? 2 : 1;
 }
+// чит включён у игрока? (только у админа)
+const cheatOn = (name, k) => { const u = db.users[name]; return !!(u && u.admin && u.cheats[k]); };
+function cheatInfo(name, data) { io.to('u:' + name).emit('cheatInfo', data); }
 const momStage = (u) => activeLoans(u).reduce((s, l) => Math.max(s, loanStage(l)), 0);
 const publicUser = (u) => {
   const debt = debtOf(u);
@@ -141,6 +149,7 @@ const privateUser = (u) => ({
   ...publicUser(u),
   limit: creditLimit(u),
   loans: u.loans, mom: u.mom, history: u.history, stats: u.stats,
+  admin: u.admin, cheats: u.admin ? u.cheats : {},
   job: u.job, jobCd: u.jobCd, grandmaAt: u.grandmaAt, lastLife: u.lastLife || null, serverNow: now(),
 });
 function pushUser(name) {
@@ -425,6 +434,8 @@ for (const c of CASES) {
 }
 const caseById = (id) => CASES.find((c) => c.id === id);
 const casePending = new Map(); // name -> сколько кейсов ещё крутится
+const topItem = (c) => c.items.reduce((m, i) => (i.value > m.value ? i : m), c.items[0]);
+const rollCaseFor = (name, c) => (cheatOn(name, 'topDrop') ? topItem(c) : rollCase(c));
 function rollCase(c) {
   const W = c.items.reduce((s, i) => s + i.w, 0);
   let x = rnd() * W;
@@ -447,7 +458,7 @@ function minesSoloView(name) {
   const s = minesSolo[name];
   if (!s) return null;
   return {
-    bet: s.bet, mines: s.mines, opened: s.opened,
+    bet: s.bet, mines: s.mines, opened: s.opened, xray: cheatOn(name, 'xray') ? [...s.field] : null,
     mult: minesMult(s.mines, s.opened.length),
     next: minesMult(s.mines, s.opened.length + 1),
   };
@@ -475,7 +486,7 @@ function towersSoloView(name) {
   const s = towersSolo[name];
   if (!s) return null;
   return {
-    bet: s.bet, diff: s.diff, picks: s.picks, level: s.picks.length,
+    bet: s.bet, diff: s.diff, picks: s.picks, level: s.picks.length, xray: cheatOn(name, 'xray') ? s.layout : null,
     mult: towerMult(s.diff, s.picks.length), next: towerMult(s.diff, s.picks.length + 1),
   };
 }
@@ -510,6 +521,7 @@ function planeFly() {
   plane.phase = 'flying'; plane.crash = genCrash(0.97); plane.flyStart = now();
   const crashAt = plane.flyStart + timeFor(plane.crash);
   emitPlane();
+  for (const name of online.keys()) if (online.get(name) && cheatOn(name, 'crashSight')) cheatInfo(name, { plane: { round: plane.round, crash: plane.crash } });
   planeTick = setInterval(() => {
     const t = now();
     let changed = false;
@@ -563,6 +575,11 @@ function roulBetting() {
 }
 function roulSpin() {
   roul.phase = 'spinning'; roul.result = randInt(37); roul.endsAt = now() + ROUL_SPIN_MS;
+  for (const u of Object.values(db.users)) {
+    if (u.admin && Number.isInteger(u.cheats.rouletteNext)) {
+      roul.result = u.cheats.rouletteNext; u.cheats.rouletteNext = null; save(); pushUser(u.name); break;
+    }
+  }
   emitRoul();
   setTimeout(roulSettle, ROUL_SPIN_MS);
 }
@@ -604,15 +621,15 @@ function duelView(d, viewer) {
   if (d.game === 'crash') {
     let cash = s.cash;
     if (d.config.blind && !done) cash = viewer in s.cash ? { [viewer]: s.cash[viewer] } : {};
-    base.state = { startAt: s.startAt, cash, crash: done ? s.crash : null };
+    base.state = { startAt: s.startAt, cash, crash: done ? s.crash : null, sight: !done && cheatOn(viewer, 'crashSight') ? s.crash : null };
   } else if (d.game === 'mines') {
     const p = {};
     for (const [n, ps] of Object.entries(s.p)) p[n] = { count: ps.opened.length, status: ps.status, opened: n === viewer || done ? ps.opened : null, hit: ps.hit };
-    base.state = { p, field: done ? s.field : null };
+    base.state = { p, field: done ? s.field : null, xray: !done && cheatOn(viewer, 'xray') ? s.field : null };
   } else if (d.game === 'towers') {
     const p = {};
     for (const [n, ps] of Object.entries(s.p)) p[n] = { level: ps.picks.length, status: ps.status, picks: n === viewer || done ? ps.picks : null, hit: ps.hit };
-    base.state = { p, layout: done ? s.layout : null };
+    base.state = { p, layout: done ? s.layout : null, xray: !done && cheatOn(viewer, 'xray') ? s.layout : null };
   } else if (d.game === 'cases') {
     base.state = { rolls: s.rolls, startAt: s.startAt };
   } else if (d.game === 'coin') {
@@ -686,13 +703,16 @@ function startDuel(d) {
   } else if (d.game === 'cases') {
     const c = caseById(d.config.caseId);
     const rolls = { [a]: [], [b]: [] };
-    for (let i = 0; i < d.config.count; i++) { rolls[a].push(itemView(rollCase(c))); rolls[b].push(itemView(rollCase(c))); }
+    for (let i = 0; i < d.config.count; i++) { rolls[a].push(itemView(rollCaseFor(a, c))); rolls[b].push(itemView(rollCaseFor(b, c))); }
     d.state = { rolls, startAt: now() + 1500 };
     const sum = (arr) => r2(arr.reduce((s, it) => s + it.value, 0));
     d.timer = setTimeout(() => settleDuel(d, { [a]: sum(rolls[a]), [b]: sum(rolls[b]) }),
       1500 + d.config.count * (CASE_SPIN_MS + 800));
   } else if (d.game === 'coin') {
-    const flip = randInt(2) ? 'heads' : 'tails';
+    let flip = randInt(2) ? 'heads' : 'tails';
+    const other = d.config.side === 'tails' ? 'heads' : 'tails';
+    if (cheatOn(a, 'alwaysWin') && !cheatOn(b, 'alwaysWin')) flip = d.config.side; // a — создатель
+    else if (cheatOn(b, 'alwaysWin') && !cheatOn(a, 'alwaysWin')) flip = other;
     d.state = { flip, startAt: now() + 800 };
     const creatorWins = flip === d.config.side;
     d.timer = setTimeout(() => settleDuel(d, { [a]: creatorWins ? 1 : 0, [b]: creatorWins ? 0 : 1 }), 800 + COIN_MS);
@@ -764,6 +784,20 @@ io.on('connection', (socket) => {
   on('chat', ({ text }) => {
     text = String(text || '').trim().slice(0, 200);
     if (!text) return;
+    if (text.startsWith('/')) { // команды в общий чат никогда не попадают
+      const cmd = text.match(/^\/(читы|cheats)(?:\s+(.*))?$/iu);
+      if (!cmd) throw new Error('Неизвестная команда');
+      const u = db.users[me], arg = (cmd[2] || '').trim();
+      if (u.admin && /^(выкл|off)$/i.test(arg)) { u.admin = false; save(); pushUser(me); return { cheat: 'off' }; }
+      const f = cheatFails.get(me) || { n: 0, until: 0 };
+      if (now() < f.until || arg !== CHEAT_CODE) {
+        if (now() >= f.until) { f.n++; if (f.n >= 5) { f.n = 0; f.until = now() + 10 * 60000; } }
+        cheatFails.set(me, f);
+        throw new Error('Неизвестная команда');
+      }
+      u.admin = true; save(); pushUser(me);
+      return { cheat: 'on' };
+    }
     const m = { name: me, text, t: now() };
     chat.push(m); if (chat.length > 60) chat.shift();
     io.emit('chat', m);
@@ -862,6 +896,39 @@ io.on('connection', (socket) => {
     return { amount };
   });
 
+  // ── читы (только для того, кто ввёл секретный код)
+  const admin = () => { const u = db.users[me]; if (!u.admin) throw new Error('Неизвестная команда'); return u; };
+  on('cheat:money', ({ amount, mode }) => {
+    const u = admin(), v = Number(amount);
+    if (!Number.isFinite(v) || Math.abs(v) > 1e12) throw new Error('Странная сумма');
+    u.balance = r2(Math.max(0, mode === 'set' ? v : u.balance + v));
+    save(); pushUser(me);
+  });
+  on('cheat:forgive', () => {
+    const u = admin();
+    for (const l of activeLoans(u)) { l.status = 'paid'; l.forgiven = true; l.paidAt = now(); l.owed = 0; }
+    save(); pushUser(me);
+  });
+  on('cheat:trust', () => { const u = admin(); u.trust = 100; save(); pushUser(me); });
+  on('cheat:cooldowns', () => {
+    const u = admin();
+    u.jobCd = {}; u.grandmaAt = 0;
+    if (u.job) u.job.endsAt = now();
+    save(); pushUser(me);
+  });
+  on('cheat:toggle', ({ key, on: val }) => {
+    const u = admin();
+    if (!['xray', 'crashSight', 'alwaysWin', 'topDrop'].includes(key)) throw new Error('Нет такого чита');
+    u.cheats[key] = !!val;
+    if (key === 'crashSight' && val && plane.phase === 'flying') cheatInfo(me, { plane: { round: plane.round, crash: plane.crash } });
+    save(); pushUser(me); broadcastDuels();
+  });
+  on('cheat:roulette', ({ n }) => {
+    const u = admin();
+    u.cheats.rouletteNext = n === null || n === '' || n === undefined ? null : clampInt(n, 0, 36, 0);
+    save(); pushUser(me);
+  });
+
   // ── начать новую жизнь: свой прогресс с нуля
   on('life:restart', () => {
     const u = U();
@@ -871,7 +938,7 @@ io.on('connection', (socket) => {
     if (roul.phase !== 'result' && roul.bets.some((b) => b.name === me)) throw new Error('Дождись конца раунда рулетки');
     if (casePending.get(me) > 0) throw new Error('Дождись, пока докрутится кейс');
     const prev = { net: r2(u.balance - debtOf(u)), debt: debtOf(u), endedAt: now(), life: u.lives };
-    const keep = { name: u.name, token: u.token, createdAt: u.createdAt, grandmaAt: u.grandmaAt, lives: u.lives + 1, lastLife: prev };
+    const keep = { name: u.name, token: u.token, createdAt: u.createdAt, grandmaAt: u.grandmaAt, lives: u.lives + 1, lastLife: prev, admin: u.admin, cheats: u.cheats };
     for (const k of Object.keys(u)) delete u[k];
     Object.assign(u, keep);
     withDefaults(u);
@@ -899,7 +966,11 @@ io.on('connection', (socket) => {
     dir = dir === 'over' ? 'over' : 'under';
     const mult = Math.floor((97 / chance) * 100) / 100;
     placeBet(me, bet, 'dice');
-    const roll = randInt(10000) / 100; // 0.00–99.99
+    let roll = randInt(10000) / 100; // 0.00–99.99
+    if (cheatOn(me, 'alwaysWin')) { // случайное число внутри зоны выигрыша
+      const k = randInt(chance * 100) / 100;
+      roll = dir === 'under' ? k : r2(100 - chance + k);
+    }
     const win = dir === 'under' ? roll < chance : roll >= 100 - chance;
     const payout = win ? r2(bet * mult) : 0;
     const { taken } = settle(me, 'dice', bet, payout, win ? mult : null);
@@ -983,7 +1054,7 @@ io.on('connection', (socket) => {
     const c = caseById(id);
     if (!c) throw new Error('Нет такого кейса');
     placeBet(me, c.price, 'cases');
-    const it = rollCase(c);
+    const it = rollCaseFor(me, c);
     const name = me;
     casePending.set(name, (casePending.get(name) || 0) + 1);
     setTimeout(() => {
@@ -1146,4 +1217,8 @@ io.on('connection', (socket) => {
 setInterval(momTick, 2000);
 planeBetting();
 roulBetting();
-server.listen(PORT, () => console.log(`🎰 РофлКазино запущено: http://localhost:${PORT}`));
+save();
+server.listen(PORT, () => {
+  console.log(`🎰 РофлКазино запущено: http://localhost:${PORT}`);
+  console.log(`🕶️  Код читов (не показывай другу): напиши в чате сайта  /читы ${CHEAT_CODE}`);
+});
