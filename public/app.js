@@ -20,7 +20,8 @@ const PLANE_BET = 8000;
 const WHEEL = [0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26];
 const RED = new Set([1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]);
 const colorOf = (n) => (n === 0 ? 'green' : RED.has(n) ? 'red' : 'black');
-const GAME_TITLE = { crash: 'Краш 1×1', mines: 'Мины', towers: 'Башни', cases: 'Кейс-батл' };
+const GAME_TITLE = { crash: 'Краш 1×1', mines: 'Мины', towers: 'Башни', cases: 'Кейс-батл', coin: 'Монетка 1×1' };
+const TAB_OF = { crash: 'crash', mines: 'mines', towers: 'towers', cases: 'cases', coin: 'dice' };
 
 const S = {
   me: null, players: [], duels: [], cases: [], towerDiff: {}, towerRows: 8,
@@ -39,6 +40,7 @@ function sync(serverNow) {
 const sNow = () => Date.now() + (S.offset || 0);
 
 function toast(text, kind = '') {
+  if (window.Snd) Snd.play(kind === 'ok' ? 'win' : kind === 'bad' ? 'lose' : kind === 'mom' ? 'ring' : 'click');
   const t = document.createElement('div');
   t.className = 'toast ' + kind;
   t.textContent = text;
@@ -72,10 +74,13 @@ async function login(name) {
   S.offset = null; sync(r.serverNow);
   S.me = r.me; S.cases = r.cases; S.towerDiff = r.towerDiff; S.towerRows = r.towerRows;
   S.plane = r.plane; S.roul = r.roulette; S.minesSolo = r.mines; S.towersSolo = r.towers;
+  S.loanPlans = r.loanPlans; S.jobs = r.jobs; S.grandmaCd = r.grandmaCd; S.arrestMax = r.arrestMax; S.minuteMs = r.minuteMs;
+  S.cases.sort((a, b) => a.price - b.price);
   if (!S.built) buildUI();
   $('#login').classList.add('hidden'); $('#app').classList.remove('hidden');
   renderMe(); renderFeed(r.feed); renderChat(r.chat);
   renderMinesSolo(); renderTowersSolo(); renderPlane(); renderRoulette(true); renderCaseOpener();
+  v2OnMe();
 }
 $('#loginBtn').onclick = () => login($('#nick').value);
 $('#nick').onkeydown = (e) => { if (e.key === 'Enter') login($('#nick').value); };
@@ -99,7 +104,10 @@ function lobbyHTML(game) {
   if (game === 'mines') cfg = `<div class="field"><label>Мин на поле</label><select data-k="mines">${range(1, 24).map((i) => `<option ${i === 5 ? 'selected' : ''}>${i}</option>`).join('')}</select></div>`;
   if (game === 'towers') cfg = `<div class="field"><label>Сложность</label><select data-k="diff">${Object.entries(S.towerDiff).map(([k, d]) => `<option value="${k}" ${k === 'medium' ? 'selected' : ''}>${d.label} (${d.cols} кл., ${d.bombs} 💣)</option>`).join('')}</select></div>`;
   if (game === 'cases') cfg = `<div class="field"><label>Кейс</label><select data-k="caseId">${S.cases.map((c) => `<option value="${c.id}">${c.emoji} ${c.name} — ${rub(c.price)}</option>`).join('')}</select></div>
-    <div class="field"><label>Кол-во кейсов</label><select data-k="count">${range(1, 5).map((i) => `<option>${i}</option>`).join('')}</select></div>`;
+    <div class="field"><label>Кол-во кейсов</label><select data-k="count">${range(1, 5).map((i) => `<option>${i}</option>`).join('')}</select></div>
+    <div class="field"><label>Режим</label><select data-k="mode"><option value="normal">🏆 Обычный — дороже побеждает</option><option value="crazy">🤪 Безумный — дешевле побеждает</option></select></div>`;
+  if (game === 'crash') cfg = `<div class="field"><label>Режим</label><select data-k="blind"><option value="">👀 Обычный</option><option value="1">🙈 Вслепую</option></select></div>`;
+  if (game === 'coin') cfg = `<div class="field"><label>Твоя сторона</label><select data-k="side"><option value="heads">🦅 Орёл</option><option value="tails">🪙 Решка</option></select></div>`;
   const stake = game === 'cases' ? '' : `<div class="field"><label>Ставка каждого, ₽</label><input data-k="stake" type="number" min="1" value="500"></div>`;
   return `<div class="panel"><h2>⚔️ Дуэли: ${GAME_TITLE[game]}</h2>
     <div class="row lobby-form" data-game="${game}" style="align-items:flex-end">${stake}${cfg}
@@ -338,7 +346,6 @@ document.addEventListener('click', (e) => {
   if (!b || b.disabled || !ACT[b.dataset.act]) return;
   ACT[b.dataset.act](b, e);
 });
-$('#refillBtn').onclick = () => emit('refill');
 $('#trBtn').onclick = async () => {
   const r = await emit('transfer', { to: $('#trTo').value, amount: $('#trAmount').value });
   if (r) { $('#trAmount').value = ''; toast('Перевод отправлен', 'ok'); }
@@ -353,7 +360,8 @@ $('#chatForm').onsubmit = (e) => {
 // ───────────────────────── общие события ─────────────────────────
 socket.on('me', (u) => {
   const old = S.me && S.me.balance;
-  S.me = u; renderMe();
+  sync(u.serverNow);
+  S.me = u; renderMe(); v2OnMe();
   if (old !== undefined && u.balance !== old) {
     const b = $('#balance'); b.classList.remove('bump'); void b.offsetWidth; b.classList.add('bump');
   }
@@ -362,16 +370,7 @@ function renderMe() {
   $('#meName').textContent = S.me.name;
   $('#balance').textContent = rub(S.me.balance);
 }
-socket.on('players', (list) => {
-  S.players = list;
-  $('#players').innerHTML = list.map((p) => `<div class="player"><span class="st ${p.online ? 'on' : ''}"></span>
-    <div class="nm">${esc(p.name)}${p.name === me() ? ' <span class="muted">(ты)</span>' : ''}
-      <div class="sub">долгов у мамы: ${p.refills || 0}${p.best ? ` · рекорд ×${p.best.toFixed(2)}` : ''}</div></div>
-    <span class="bl">${rub(p.balance)}</span></div>`).join('');
-  const sel = $('#trTo'), cur = sel.value;
-  sel.innerHTML = list.filter((p) => p.name !== me()).map((p) => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join('') || '<option value="">нет игроков</option>';
-  if (cur) sel.value = cur;
-});
+socket.on('players', (list) => { S.players = list; v2RenderPlayers(); });
 function feedItem(f) { return `<div class="${f.kind}">${esc(f.text)}</div>`; }
 function renderFeed(list) { $('#feed').innerHTML = list.map(feedItem).join(''); }
 socket.on('feed', (f) => {
@@ -396,15 +395,15 @@ socket.on('duels', ({ list, serverNow }) => {
     if (mine && d.status !== 'done') S.view[d.game] = d.id;
     if (prev === 'open' && d.status === 'playing' && d.creator === me()) {
       toast(`⚔️ Вызов принят: ${d.players[1]} (${GAME_TITLE[d.game]})!`, 'ok');
-      setTab(d.game); if (S.mode[d.game]) { S.mode[d.game] = d.game === 'cases' ? 'battle' : 'duel'; applyModes(); }
+      setTab(TAB_OF[d.game]); if (S.mode[d.game]) { S.mode[d.game] = d.game === 'cases' ? 'battle' : 'duel'; applyModes(); }
     }
     if (!prev && d.status === 'open' && d.creator !== me() && S.prevDuels.size) toast(`⚔️ ${d.creator} вызывает: ${GAME_TITLE[d.game]} на ${rub(d.stake)}`);
   }
   S.prevDuels = new Map(list.map((d) => [d.id, d.status]));
-  for (const g of ['crash', 'mines', 'towers', 'cases']) { renderLobby(g); renderArena(g); }
+  for (const g of ['crash', 'mines', 'towers', 'cases', 'coin']) { renderLobby(g); renderArena(g); }
   // красная точка на вкладках с открытыми вызовами
   document.querySelectorAll('#tabs button').forEach((b) => {
-    const has = list.some((d) => d.game === b.dataset.tab && d.status === 'open' && d.creator !== me());
+    const has = list.some((d) => TAB_OF[d.game] === b.dataset.tab && d.status === 'open' && d.creator !== me());
     const dot = b.querySelector('.dot');
     if (has && !dot) b.insertAdjacentHTML('beforeend', '<span class="dot"></span>');
     if (!has && dot) dot.remove();
@@ -413,7 +412,9 @@ socket.on('duels', ({ list, serverNow }) => {
 function duelCfgText(d) {
   if (d.game === 'mines') return `${d.config.mines} 💣`;
   if (d.game === 'towers') return S.towerDiff[d.config.diff].label;
-  if (d.game === 'cases') { const c = S.cases.find((x) => x.id === d.config.caseId); return `${c.emoji} ${c.name} ×${d.config.count}`; }
+  if (d.game === 'cases') { const c = S.cases.find((x) => x.id === d.config.caseId); return `${c.emoji} ${c.name} ×${d.config.count}${d.config.mode === 'crazy' ? ' · 🤪 безумный' : ''}`; }
+  if (d.game === 'crash') return d.config.blind ? '🙈 вслепую' : '';
+  if (d.game === 'coin') return `создатель за ${d.config.side === 'tails' ? '🪙 решку' : '🦅 орла'}`;
   return '';
 }
 function renderLobby(game) {
@@ -485,8 +486,8 @@ const ARENA = {
     $('.cr-head', el).innerHTML = arenaHead(d);
     const cash = d.state ? d.state.cash : {};
     $('.cr-vs', el).innerHTML = vsHTML(d, (n) => ({
-      value: cash[n] ? `×${cash[n].toFixed(2)}` : d.status === 'done' ? '💥 0' : '…',
-      sub: cash[n] ? 'вывод' : d.status === 'done' ? 'краш' : d.status === 'open' ? 'ждёт' : 'держит',
+      value: cash[n] ? `×${cash[n].toFixed(2)}` : d.status === 'done' ? '💥 0' : d.config.blind && n !== me() ? '🙈' : '…',
+      sub: cash[n] ? 'вывод' : d.status === 'done' ? 'краш' : d.status === 'open' ? 'ждёт' : d.config.blind && n !== me() ? 'вслепую' : 'держит',
     }));
     $('.cr-banner', el).innerHTML = bannerHTML(d);
     $('#crBtn').classList.toggle('hidden', !d.players.includes(me()) || d.status === 'done');
@@ -981,4 +982,5 @@ function frame() {
   else if (S.tab === 'plane') drawPlane();
   else if (S.tab === 'roulette') updateRoulTimer();
   else if (S.tab === 'cases') tickBattle(false);
+  v2Frame();
 }

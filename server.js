@@ -8,7 +8,6 @@ const path = require('path');
 
 const PORT = process.env.PORT || 3000;
 const START_BALANCE = 10000;
-const REFILL = 10000;
 const DATA_FILE = process.env.DATA_FILE || path.join(__dirname, 'data.json');
 
 const app = express();
@@ -54,9 +53,13 @@ function genCrash(edge) {
 }
 
 // ───────────────────────── хранилище ─────────────────────────
-let db = { users: {} };
+const DATA_VERSION = 2; // смена версии = всё с нуля
+let db = { version: DATA_VERSION, users: {} };
 try { db = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')); } catch { /* первый запуск */ }
-if (!db.users) db.users = {};
+if (db.version !== DATA_VERSION || !db.users) {
+  console.log('🧹 Новая версия данных — балансы и статистика начинаются с нуля');
+  db = { version: DATA_VERSION, users: {} };
+}
 let saveTimer = null;
 function save() {
   clearTimeout(saveTimer);
@@ -67,14 +70,81 @@ function save() {
   }, 400);
 }
 
+// ───────────────────────── мама-банк: настройки ─────────────────────────
+const TIME_SCALE = Number(process.env.DEBT_TIME_SCALE) > 0 ? Number(process.env.DEBT_TIME_SCALE) : 1;
+const MIN = 60000 * TIME_SCALE; // «минута» долга
+const START_TRUST = 60;
+const MAX_LOANS = 3;
+const ARREST_MAX = 1000;
+const PENALTY_RATE = 0.03;
+const STAGE_MIN = { 1: 0, 2: 3, 3: 10 }; // стадии просрочки (минут после дедлайна)
+const GRANDMA_CD = 30 * 60000;
+const LOAN_PLANS = [
+  { id: 'bread', name: 'На хлебушек', emoji: '🍞', amount: 5000, rate: 0.10, minutes: 10, minTrust: 0 },
+  { id: 'phone', name: 'На телефон', emoji: '📱', amount: 15000, rate: 0.20, minutes: 20, minTrust: 30 },
+  { id: 'talk', name: 'Серьёзный разговор', emoji: '🗣️', amount: 30000, rate: 0.30, minutes: 30, minTrust: 50 },
+  { id: 'flat', name: 'Под залог квартиры', emoji: '🏠', amount: 75000, rate: 0.50, minutes: 45, minTrust: 75 },
+];
+const JOBS = {
+  dishes: { id: 'dishes', name: 'Помыть посуду', emoji: '🍽️', pay: 300, secs: 10, cd: 60 },
+  dog: { id: 'dog', name: 'Выгулять собаку', emoji: '🐕', pay: 800, secs: 30, cd: 180 },
+  shop: { id: 'shop', name: 'Сходить в магазин', emoji: '🛒', pay: 1500, secs: 60, cd: 360 },
+  homework: { id: 'homework', name: 'Сделать уроки брату', emoji: '📚', pay: 3000, secs: 120, cd: 900 },
+};
+const MOM_LINES = {
+  loan: ['Ладно, держи {amount}. Но вернуть {owe} — через {min} мин, поняли друг друга?', 'Это последний раз. Честно последний. Жду {owe} через {min} мин.', 'Только папе не говори. Срок — {min} мин.', 'Я в твои годы уже на заводе работала... Ладно, держи. Вернуть {owe}.', 'Опять казино? Ох... {amount}, и чтобы через {min} мин было {owe}.'],
+  remind: ['⏰ Напоминаю: долг {owe}, осталось совсем чуть-чуть.', '⏰ Ты же помнишь про {owe}? Я вот помню.', '⏰ Скоро срок. Не заставляй меня звонить.'],
+  stage1: ['📞 Пропущенный вызов: Мама (3)', '📞 Почему не берёшь трубку?! Срок вышел!', '📞 Я жду. Пеня капает, между прочим, 3% в минуту.', '📞 Я тебе вообще-то мать, а не банк. Где деньги?'],
+  stage2: ['😡 Всё. Теперь половина твоих выигрышей — моя, пока не вернёшь.', '😡 Карту твою я заблокировала. Буду забирать половину выигрыша.', '😡 Я позвонила тёте Свете. Она тоже в шоке. Конфискую выигрыши.'],
+  stage3: ['🔒 Домашний арест! Ставки не больше 1 000 ₽, пока не вернёшь долг.', '🔒 Папа уже в курсе. Сидишь дома, играешь по мелочи.', '🔒 Wi-Fi отключать не буду, но ставки — максимум 1 000 ₽.'],
+  extend: ['Ладно, ещё немного подожду. Но +10%!', 'Отсрочка. Последняя. Честно-честно последняя.', 'Хорошо, но я это запомню.'],
+  paidOk: ['🥰 Молодец! Вот видишь, можешь же.', '🥰 Спасибо, солнышко. Доверие растёт.', '🥰 Вовремя! Может, ещё и посуду помоешь?'],
+  paidLate: ['Ну наконец-то. Но я это запомню.', 'Деньги вернулись... но осадочек остался.', 'Хорошо, что вернул(а). Плохо, что так поздно.'],
+  refuse: ['Хватит с тебя. Сначала верни старое.'],
+  job: ['Спасибо за помощь! Держи {pay}.', 'Вот это я понимаю — полезный ребёнок. +{pay}.'],
+  helped: ['Передай другу спасибо, он(а) закрыл(а) {amount} твоего долга.'],
+};
+
+// ───────────────────────── игроки ─────────────────────────
+function withDefaults(u) {
+  u.balance ??= START_BALANCE; u.wagered ??= 0; u.best ??= 0;
+  u.trust ??= START_TRUST; u.loans ??= []; u.loanSeq ??= 1;
+  u.mom ??= []; u.history ??= []; u.jobCd ??= {}; u.job ??= null; u.grandmaAt ??= 0;
+  u.stats ??= {};
+  for (const k of ['borrowed', 'repaid', 'penalties', 'overdue', 'onTime', 'late', 'jobs', 'jobsEarned', 'grandma', 'confiscated', 'helped']) u.stats[k] ??= 0;
+  u.stats.games ??= {};
+  delete u.refills;
+  return u;
+}
+for (const u of Object.values(db.users)) withDefaults(u);
+
 const online = new Map(); // name -> кол-во подключений
-const publicUser = (u) => ({
-  name: u.name, balance: u.balance, refills: u.refills, wagered: u.wagered,
-  best: u.best, online: (online.get(u.name) || 0) > 0,
+const activeLoans = (u) => u.loans.filter((l) => l.status === 'active');
+const debtOf = (u) => r2(activeLoans(u).reduce((s, l) => s + l.owed, 0));
+const creditLimit = (u) => 10000 + Math.round(u.trust) * 1000;
+const clampTrust = (x) => Math.max(0, Math.min(100, Math.round(x)));
+function loanStage(l, t = now()) {
+  if (l.status !== 'active' || t < l.dueAt) return 0;
+  const m = (t - l.dueAt) / MIN;
+  return m >= STAGE_MIN[3] ? 3 : m >= STAGE_MIN[2] ? 2 : 1;
+}
+const momStage = (u) => activeLoans(u).reduce((s, l) => Math.max(s, loanStage(l)), 0);
+const publicUser = (u) => {
+  const debt = debtOf(u);
+  return {
+    name: u.name, balance: u.balance, debt, net: r2(u.balance - debt), trust: u.trust, stage: momStage(u),
+    best: u.best, wagered: u.wagered, online: (online.get(u.name) || 0) > 0,
+  };
+};
+const privateUser = (u) => ({
+  ...publicUser(u),
+  limit: creditLimit(u),
+  loans: u.loans, mom: u.mom, history: u.history, stats: u.stats,
+  job: u.job, jobCd: u.jobCd, grandmaAt: u.grandmaAt, serverNow: now(),
 });
 function pushUser(name) {
   const u = db.users[name];
-  if (u) io.to('u:' + name).emit('me', publicUser(u));
+  if (u) io.to('u:' + name).emit('me', privateUser(u));
   broadcastPlayers();
 }
 let playersTimer = null;
@@ -82,22 +152,132 @@ function broadcastPlayers() {
   if (playersTimer) return;
   playersTimer = setTimeout(() => {
     playersTimer = null;
-    io.emit('players', Object.values(db.users).map(publicUser).sort((a, b) => b.balance - a.balance));
+    io.emit('players', Object.values(db.users).map(publicUser).sort((a, b) => b.net - a.net));
   }, 50);
 }
-function take(name, amount) {
+function momSay(u, kind, vars = {}, toFeed = false) {
+  const list = MOM_LINES[kind];
+  const text = list[randInt(list.length)].replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? '');
+  const m = { t: now(), text, kind };
+  u.mom.unshift(m); u.mom.length = Math.min(u.mom.length, 40);
+  io.to('u:' + u.name).emit('mom', m);
+  if (toFeed) addFeed(`👩 Мама игрока ${u.name}: «${text}»`, 'mom');
+}
+
+// ───────────────────────── деньги: ставки и выплаты ─────────────────────────
+const gameStats = (u, game) => (u.stats.games[game] ??= { played: 0, won: 0, wagered: 0, returned: 0 });
+function placeBet(name, amount, game, count = true) {
   const u = db.users[name];
   if (!(amount > 0) || amount > u.balance + 1e-9) throw new Error('Недостаточно средств');
+  if (amount > ARREST_MAX && momStage(u) >= 3) throw new Error(`🔒 Домашний арест: ставка не больше ${rub(ARREST_MAX)}. Верни долг маме!`);
   u.balance = r2(u.balance - amount);
-  u.wagered = r2((u.wagered || 0) + amount);
+  u.wagered = r2(u.wagered + amount);
+  const g = gameStats(u, game);
+  g.wagered = r2(g.wagered + amount);
+  if (count) g.played++;
   save(); pushUser(name);
 }
-function give(name, amount, mult) {
+function refund(name, amount, game) {
   const u = db.users[name];
-  if (!u || !(amount > 0)) return;
   u.balance = r2(u.balance + amount);
-  if (mult && mult > 1 && mult > (u.best || 0)) u.best = r2(mult);
+  u.wagered = r2(u.wagered - amount);
+  const g = gameStats(u, game);
+  g.wagered = r2(g.wagered - amount);
+  g.played = Math.max(0, g.played - 1);
   save(); pushUser(name);
+}
+// выплата по завершённой ставке (payout = 0 — проигрыш); тут же конфискация мамой
+function settle(name, game, stake, payout, mult) {
+  const u = db.users[name];
+  if (!u) return { kept: 0, taken: 0 };
+  payout = r2(payout || 0);
+  const g = gameStats(u, game);
+  g.returned = r2(g.returned + payout);
+  if (payout > stake) g.won++;
+  let taken = 0;
+  const profit = payout - stake;
+  if (profit > 0 && momStage(u) >= 2) {
+    taken = r2(Math.min(profit * 0.5, debtOf(u)));
+    if (taken > 0) {
+      u.stats.confiscated = r2(u.stats.confiscated + taken);
+      repayLoans(u, taken);
+      io.to('u:' + name).emit('confiscated', { amount: taken });
+    }
+  }
+  const kept = r2(payout - taken);
+  u.balance = r2(u.balance + kept);
+  if (mult && mult > 1 && mult > u.best) u.best = r2(mult);
+  u.history.unshift({ t: now(), game, stake, payout, taken });
+  u.history.length = Math.min(u.history.length, 40);
+  save(); pushUser(name);
+  return { kept, taken };
+}
+
+// ───────────────────────── долги ─────────────────────────
+function payLoan(u, l, amount) {
+  const pay = r2(Math.min(amount, l.owed));
+  l.owed = r2(l.owed - pay); l.paid = r2(l.paid + pay);
+  u.stats.repaid = r2(u.stats.repaid + pay);
+  if (l.owed < 0.01) closeLoan(u, l);
+  return pay;
+}
+function repayLoans(u, amount) { // самые ранние дедлайны — первыми
+  for (const l of activeLoans(u).sort((a, b) => a.dueAt - b.dueAt)) {
+    if (amount < 0.01) break;
+    amount = r2(amount - payLoan(u, l, amount));
+  }
+}
+function closeLoan(u, l) {
+  l.owed = 0; l.status = 'paid'; l.paidAt = now();
+  if (l.wasOverdue) { u.trust = clampTrust(u.trust + 2); u.stats.late++; momSay(u, 'paidLate', {}, true); }
+  else { u.trust = clampTrust(u.trust + 8); u.stats.onTime++; momSay(u, 'paidOk'); addFeed(`✅ ${u.name} вовремя вернул(а) маме ${rub(l.base)} (${l.emoji} ${l.name})`, 'mom'); }
+  const closed = u.loans.filter((x) => x.status !== 'active');
+  if (closed.length > 15) { const drop = new Set(closed.slice(15)); u.loans = u.loans.filter((x) => !drop.has(x)); }
+}
+function momTick() {
+  const t = now();
+  for (const u of Object.values(db.users)) {
+    let changed = false;
+    if (u.job && t >= u.job.endsAt) {
+      const J = JOBS[u.job.id];
+      u.job = null;
+      if (J) {
+        u.balance = r2(u.balance + J.pay); u.trust = clampTrust(u.trust + 1);
+        u.stats.jobs++; u.stats.jobsEarned = r2(u.stats.jobsEarned + J.pay);
+        io.to('u:' + u.name).emit('jobDone', { name: J.name, emoji: J.emoji, pay: J.pay });
+        if (randInt(3) === 0) momSay(u, 'job', { pay: rub(J.pay) });
+      }
+      changed = true;
+    }
+    for (const l of activeLoans(u)) {
+      if (!l.reminded && t >= l.dueAt - 2 * MIN && t < l.dueAt) {
+        l.reminded = true; momSay(u, 'remind', { owe: rub(l.owed) }); changed = true;
+      }
+      const st = loanStage(l, t);
+      while ((l.stage || 0) < st) {
+        l.stage = (l.stage || 0) + 1;
+        if (l.stage === 1) { l.wasOverdue = true; u.stats.overdue++; u.trust = clampTrust(u.trust - 10); }
+        else u.trust = clampTrust(u.trust - 5);
+        momSay(u, 'stage' + l.stage, {}, true);
+        changed = true;
+      }
+      if (st >= 1) {
+        const mins = Math.floor((t - l.dueAt) / MIN);
+        if ((l.penMin || 0) < mins) {
+          if (l.penalty >= l.base) l.penMin = mins;
+          while ((l.penMin || 0) < mins) {
+            l.penMin = (l.penMin || 0) + 1;
+            const add = r2(Math.min(l.base - l.penalty, l.owed * PENALTY_RATE));
+            if (add <= 0) { l.penMin = mins; break; }
+            l.owed = r2(l.owed + add); l.penalty = r2(l.penalty + add);
+            u.stats.penalties = r2(u.stats.penalties + add);
+          }
+          changed = true;
+        }
+      }
+    }
+    if (changed) { save(); pushUser(u.name); }
+  }
 }
 
 // лента событий и чат
@@ -111,53 +291,129 @@ const chat = [];
 
 // ───────────────────────── кейсы ─────────────────────────
 const CASES = [
-  {
-    id: 'bomzh', name: 'Бомж-кейс', emoji: '🗑️', price: 100, items: [
-      { name: 'Семечки', emoji: '🌻', value: 10, w: 300 },
-      { name: 'Доширак', emoji: '🍜', value: 30, w: 260 },
-      { name: 'Шаурма', emoji: '🌯', value: 70, w: 200 },
-      { name: 'Пиво', emoji: '🍺', value: 110, w: 120 },
-      { name: 'Пицца', emoji: '🍕', value: 180, w: 70 },
-      { name: 'Кроссы с рынка', emoji: '👟', value: 450, w: 30 },
-      { name: 'Самокат', emoji: '🛴', value: 1200, w: 12 },
-      { name: 'Айфон', emoji: '📱', value: 6000, w: 3 },
-    ],
-  },
-  {
-    id: 'student', name: 'Студент', emoji: '🎒', price: 500, items: [
-      { name: 'Проездной', emoji: '🚌', value: 80, w: 300 },
-      { name: 'Энергетик ящик', emoji: '⚡', value: 200, w: 250 },
-      { name: 'Стипендия', emoji: '💵', value: 450, w: 200 },
-      { name: 'Наушники', emoji: '🎧', value: 900, w: 120 },
-      { name: 'Видеокарта б/у', emoji: '🖥️', value: 2000, w: 45 },
-      { name: 'Ноутбук', emoji: '💻', value: 5000, w: 10 },
-      { name: 'Автомат по сессии', emoji: '🎓', value: 15000, w: 2 },
-    ],
-  },
-  {
-    id: 'major', name: 'Мажор', emoji: '💎', price: 2500, items: [
-      { name: 'Кальян', emoji: '💨', value: 400, w: 300 },
-      { name: 'Кроссовки Jordan', emoji: '👟', value: 1200, w: 250 },
-      { name: 'Пятёрка', emoji: '💸', value: 2500, w: 200 },
-      { name: 'PlayStation', emoji: '🎮', value: 5000, w: 120 },
-      { name: 'Часы', emoji: '⌚', value: 12000, w: 30 },
-      { name: 'Байк', emoji: '🏍️', value: 30000, w: 7 },
-      { name: 'Гелик', emoji: '🚙', value: 100000, w: 1 },
-    ],
-  },
-  {
-    id: 'oligarch', name: 'Олигарх', emoji: '👑', price: 10000, items: [
-      { name: 'Ужин в ресторане', emoji: '🍾', value: 2000, w: 450 },
-      { name: 'Шуба', emoji: '🧥', value: 5000, w: 250 },
-      { name: 'Котлета налички', emoji: '💰', value: 10000, w: 200 },
-      { name: 'Ролекс', emoji: '⌚', value: 25000, w: 90 },
-      { name: 'Порш', emoji: '🏎️', value: 60000, w: 30 },
-      { name: 'Яхта', emoji: '🛥️', value: 200000, w: 5 },
-      { name: 'Остров', emoji: '🏝️', value: 500000, w: 1 },
-    ],
-  },
+  { id: 'school', name: 'Школьник', emoji: '🏫', price: 50, items: [
+    { name: 'Жвачка', emoji: '🍬', value: 5, w: 300 },
+    { name: 'Сменка', emoji: '🩴', value: 15, w: 260 },
+    { name: 'Списанная домашка', emoji: '📓', value: 40, w: 200 },
+    { name: 'Пятёрка в дневнике', emoji: '5️⃣', value: 60, w: 120 },
+    { name: 'Карманные', emoji: '💵', value: 120, w: 60 },
+    { name: 'Самокат', emoji: '🛴', value: 400, w: 15 },
+    { name: 'Айфон одноклассника', emoji: '📱', value: 2500, w: 2 },
+  ] },
+  { id: 'bomzh', name: 'Бомж-кейс', emoji: '🗑️', price: 100, items: [
+    { name: 'Семечки', emoji: '🌻', value: 10, w: 300 },
+    { name: 'Доширак', emoji: '🍜', value: 30, w: 260 },
+    { name: 'Шаурма', emoji: '🌯', value: 70, w: 200 },
+    { name: 'Пиво', emoji: '🍺', value: 110, w: 120 },
+    { name: 'Пицца', emoji: '🍕', value: 180, w: 70 },
+    { name: 'Кроссы с рынка', emoji: '👟', value: 450, w: 30 },
+    { name: 'Самокат', emoji: '🛴', value: 1200, w: 12 },
+    { name: 'Айфон', emoji: '📱', value: 6000, w: 3 },
+  ] },
+  { id: 'mama', name: 'Мамин кейс', emoji: '👩', price: 200, items: [
+    { name: 'Тапок (прилетел)', emoji: '🩴', value: 10, w: 300 },
+    { name: 'Шерстяные носки', emoji: '🧦', value: 60, w: 250 },
+    { name: 'Тарелка борща', emoji: '🍲', value: 150, w: 200 },
+    { name: 'Котлеты с собой', emoji: '🍱', value: 250, w: 120 },
+    { name: 'Шапка (надень!)', emoji: '🧢', value: 500, w: 50 },
+    { name: 'Конверт «на чёрный день»', emoji: '✉️', value: 2000, w: 12 },
+    { name: 'Мамина заначка', emoji: '💰', value: 10000, w: 2 },
+  ] },
+  { id: 'dacha', name: 'Дача', emoji: '🏡', price: 300, items: [
+    { name: 'Огурцы', emoji: '🥒', value: 20, w: 300 },
+    { name: 'Рассада', emoji: '🌱', value: 80, w: 250 },
+    { name: 'Шашлык', emoji: '🍢', value: 250, w: 200 },
+    { name: 'Мангал', emoji: '🔥', value: 450, w: 120 },
+    { name: 'Баня', emoji: '🧖', value: 1200, w: 40 },
+    { name: 'Мотоблок', emoji: '🚜', value: 4000, w: 10 },
+    { name: 'Участок у озера', emoji: '🏞️', value: 20000, w: 1 },
+  ] },
+  { id: 'student', name: 'Студент', emoji: '🎒', price: 500, items: [
+    { name: 'Проездной', emoji: '🚌', value: 80, w: 300 },
+    { name: 'Энергетик ящик', emoji: '⚡', value: 200, w: 250 },
+    { name: 'Стипендия', emoji: '💵', value: 450, w: 200 },
+    { name: 'Наушники', emoji: '🎧', value: 900, w: 120 },
+    { name: 'Видеокарта б/у', emoji: '🖥️', value: 2000, w: 45 },
+    { name: 'Ноутбук', emoji: '💻', value: 5000, w: 10 },
+    { name: 'Автомат по сессии', emoji: '🎓', value: 15000, w: 2 },
+  ] },
+  { id: 'otaku', name: 'Отаку', emoji: '🍥', price: 750, items: [
+    { name: 'Значок с вайфу', emoji: '📛', value: 50, w: 300 },
+    { name: 'Брелок', emoji: '🔑', value: 200, w: 250 },
+    { name: 'Том манги', emoji: '📚', value: 600, w: 200 },
+    { name: 'Фигурка', emoji: '🗿', value: 1500, w: 110 },
+    { name: 'Косплей-костюм', emoji: '👘', value: 4000, w: 35 },
+    { name: 'Дакимакура', emoji: '🛏️', value: 9000, w: 8 },
+    { name: 'Поездка в Японию', emoji: '🗾', value: 60000, w: 1 },
+  ] },
+  { id: 'gamer', name: 'Геймер', emoji: '🎮', price: 1000, items: [
+    { name: 'Донат 99 ₽', emoji: '🪙', value: 99, w: 300 },
+    { name: 'Коврик', emoji: '🟫', value: 400, w: 250 },
+    { name: 'Скин на нож', emoji: '🔪', value: 900, w: 200 },
+    { name: 'Механическая клава', emoji: '⌨️', value: 2000, w: 110 },
+    { name: 'PS5', emoji: '🎮', value: 6000, w: 30 },
+    { name: 'Игровой ПК', emoji: '🖥️', value: 20000, w: 6 },
+    { name: 'Контракт с киберспорт-командой', emoji: '🏆', value: 80000, w: 1 },
+  ] },
+  { id: 'allin', name: 'Всё или ничего', emoji: '🎲', price: 1000, items: [
+    { name: 'Пустота', emoji: '🕳️', value: 0, w: 900 },
+    { name: 'Утешительный приз', emoji: '🍭', value: 500, w: 200 },
+    { name: 'Удвоение', emoji: '✌️', value: 2000, w: 100 },
+    { name: 'Джекпот ×10', emoji: '💥', value: 10000, w: 25 },
+    { name: 'Мега-джекпот ×50', emoji: '🌈', value: 50000, w: 4 },
+  ] },
+  { id: 'club', name: 'Ночной клуб', emoji: '🌃', price: 1500, items: [
+    { name: 'Штамп на руке', emoji: '🖐️', value: 100, w: 300 },
+    { name: 'Коктейль', emoji: '🍹', value: 600, w: 250 },
+    { name: 'Кальян на компанию', emoji: '💨', value: 1500, w: 200 },
+    { name: 'VIP-стол', emoji: '🛋️', value: 4000, w: 90 },
+    { name: 'Бутылка шампанского', emoji: '🍾', value: 9000, w: 25 },
+    { name: 'Ламбо до утра', emoji: '🏎️', value: 40000, w: 3 },
+  ] },
+  { id: 'major', name: 'Мажор', emoji: '💎', price: 2500, items: [
+    { name: 'Кальян', emoji: '💨', value: 400, w: 300 },
+    { name: 'Кроссовки Jordan', emoji: '👟', value: 1200, w: 250 },
+    { name: 'Пятёрка', emoji: '💸', value: 2500, w: 200 },
+    { name: 'PlayStation', emoji: '🎮', value: 5000, w: 120 },
+    { name: 'Часы', emoji: '⌚', value: 12000, w: 30 },
+    { name: 'Байк', emoji: '🏍️', value: 30000, w: 7 },
+    { name: 'Гелик', emoji: '🚙', value: 100000, w: 1 },
+  ] },
+  { id: 'crypto', name: 'Крипта', emoji: '₿', price: 5000, items: [
+    { name: 'Скам-токен', emoji: '🐸', value: 50, w: 400 },
+    { name: 'Мем-коин', emoji: '🐕', value: 1500, w: 250 },
+    { name: 'Эфир', emoji: '💠', value: 5000, w: 180 },
+    { name: 'NFT с обезьяной', emoji: '🐒', value: 12000, w: 70 },
+    { name: 'Ферма в гараже', emoji: '⛏️', value: 40000, w: 12 },
+    { name: 'Биткоин', emoji: '₿', value: 250000, w: 1 },
+  ] },
+  { id: 'oligarch', name: 'Олигарх', emoji: '👑', price: 10000, items: [
+    { name: 'Ужин в ресторане', emoji: '🍾', value: 2000, w: 450 },
+    { name: 'Шуба', emoji: '🧥', value: 5000, w: 250 },
+    { name: 'Котлета налички', emoji: '💰', value: 10000, w: 200 },
+    { name: 'Ролекс', emoji: '⌚', value: 25000, w: 90 },
+    { name: 'Порш', emoji: '🏎️', value: 60000, w: 30 },
+    { name: 'Яхта', emoji: '🛥️', value: 200000, w: 5 },
+    { name: 'Остров', emoji: '🏝️', value: 500000, w: 1 },
+  ] },
+  { id: 'space', name: 'Космос', emoji: '🚀', price: 25000, items: [
+    { name: 'Космическая еда в тюбике', emoji: '🧃', value: 2000, w: 400 },
+    { name: 'Метеорит', emoji: '☄️', value: 10000, w: 250 },
+    { name: 'Скафандр', emoji: '👨‍🚀', value: 25000, w: 180 },
+    { name: 'Спутник', emoji: '🛰️', value: 60000, w: 80 },
+    { name: 'Полёт на МКС', emoji: '🚀', value: 200000, w: 10 },
+    { name: 'Участок на Луне', emoji: '🌕', value: 2500000, w: 1 },
+  ] },
 ];
+const CASE_RTP = 0.95;
 for (const c of CASES) {
+  // подбираем вес самого дешёвого предмета так, чтобы возврат кейса был ≈ CASE_RTP
+  const low = c.items.reduce((m, i) => (i.value < m.value ? i : m), c.items[0]);
+  const rest = c.items.filter((i) => i !== low);
+  const S = rest.reduce((s, i) => s + i.value * i.w, 0), Wr = rest.reduce((s, i) => s + i.w, 0);
+  const T = c.price * CASE_RTP;
+  const w0 = (S - T * Wr) / (T - low.value);
+  if (w0 > 0 && T > low.value) low.w = Math.round(w0 * 100) / 100;
   const W = c.items.reduce((s, i) => s + i.w, 0);
   c.ev = r2(c.items.reduce((s, i) => s + i.value * i.w, 0) / W);
   for (const it of c.items) {
@@ -239,7 +495,7 @@ const emitPlane = () => io.emit('plane', planeView());
 function planeCashout(name, m) {
   const b = plane.bets[name];
   b.cashedAt = m; b.win = r2(b.amount * m);
-  give(name, b.win, m);
+  settle(name, 'plane', b.amount, b.win, m);
   if (m >= 10) addFeed(`✈️ ${name}: ×${m.toFixed(2)} в самолётике → +${rub(b.win)}`, 'win');
 }
 function planeBetting() {
@@ -265,6 +521,7 @@ function planeFly() {
 }
 function planeCrash() {
   plane.phase = 'crashed';
+  for (const [name, b] of Object.entries(plane.bets)) if (!b.cashedAt) settle(name, 'plane', b.amount, 0);
   plane.history.unshift(plane.crash); plane.history.length = Math.min(plane.history.length, 25);
   emitPlane();
   setTimeout(planeBetting, PLANE_AFTER_MS);
@@ -314,8 +571,10 @@ function roulSettle() {
     const T = ROUL_TYPES[b.type];
     if (T.test(n, b.value)) wins[b.name] = r2((wins[b.name] || 0) + b.amount * T.mult);
   }
+  const stakes = {};
+  for (const b of roul.bets) stakes[b.name] = r2((stakes[b.name] || 0) + b.amount);
+  for (const [name, st] of Object.entries(stakes)) settle(name, 'roulette', st, wins[name] || 0);
   for (const [name, w] of Object.entries(wins)) {
-    give(name, w);
     if (w >= 5000) addFeed(`🎡 ${name}: +${rub(w)} в рулетке (выпало ${n})`, 'win');
   }
   roul.wins = wins; roul.phase = 'result'; roul.endsAt = now() + ROUL_RESULT_MS;
@@ -325,7 +584,9 @@ function roulSettle() {
 }
 
 // ───────────────────────── дуэли 1 на 1 ─────────────────────────
-const GAME_NAMES = { crash: 'краш-дуэль', mines: 'мины-дуэль', towers: 'башни-дуэль', cases: 'кейс-батл' };
+const GAME_NAMES = { crash: 'краш-дуэль', mines: 'мины-дуэль', towers: 'башни-дуэль', cases: 'кейс-батл', coin: 'монетка' };
+const DUEL_KEY = { crash: 'crash', mines: 'mines-duel', towers: 'towers-duel', cases: 'cases-battle', coin: 'coin' };
+const COIN_MS = 3200;
 const duels = new Map();
 let duelSeq = 1;
 const activeDuelOf = (name) => [...duels.values()].find((d) => d.status !== 'done' && d.players.includes(name));
@@ -339,7 +600,9 @@ function duelView(d, viewer) {
   const s = d.state;
   if (!s) return base;
   if (d.game === 'crash') {
-    base.state = { startAt: s.startAt, cash: s.cash, crash: done ? s.crash : null };
+    let cash = s.cash;
+    if (d.config.blind && !done) cash = viewer in s.cash ? { [viewer]: s.cash[viewer] } : {};
+    base.state = { startAt: s.startAt, cash, crash: done ? s.crash : null };
   } else if (d.game === 'mines') {
     const p = {};
     for (const [n, ps] of Object.entries(s.p)) p[n] = { count: ps.opened.length, status: ps.status, opened: n === viewer || done ? ps.opened : null, hit: ps.hit };
@@ -350,6 +613,8 @@ function duelView(d, viewer) {
     base.state = { p, layout: done ? s.layout : null };
   } else if (d.game === 'cases') {
     base.state = { rolls: s.rolls, startAt: s.startAt };
+  } else if (d.game === 'coin') {
+    base.state = { flip: s.flip, startAt: s.startAt };
   }
   return base;
 }
@@ -372,24 +637,28 @@ function settleDuel(d, scores) {
   const [a, b] = d.players;
   const pot = d.game === 'cases' ? null : d.stake * 2;
   let winner = null;
-  if (scores[a] > scores[b]) winner = a; else if (scores[b] > scores[a]) winner = b;
-  const game = GAME_NAMES[d.game];
+  const crazy = d.game === 'cases' && d.config.mode === 'crazy'; // в безумном батле выигрывает меньший дроп
+  if (scores[a] !== scores[b]) winner = (scores[a] > scores[b]) !== crazy ? a : b;
+  const game = GAME_NAMES[d.game], key = DUEL_KEY[d.game];
+  const loser = winner === a ? b : a;
   if (d.game === 'cases') {
     const ta = scores[a], tb = scores[b];
     if (winner) {
-      give(winner, r2(ta + tb));
+      settle(winner, key, d.stake, r2(ta + tb));
+      settle(loser, key, d.stake, 0);
       addFeed(`🏆 ${winner} побеждает ${winner === a ? b : a} (${game}) → +${rub(ta + tb)}`, 'duel');
     } else {
-      give(a, ta); give(b, tb);
+      settle(a, key, d.stake, ta); settle(b, key, d.stake, tb);
       addFeed(`🤝 Ничья в кейс-батле ${a} vs ${b}`, 'duel');
     }
     d.result = { winner, scores, prize: winner ? r2(ta + tb) : null };
   } else {
     if (winner) {
-      give(winner, pot);
+      settle(winner, key, d.stake, pot);
+      settle(loser, key, d.stake, 0);
       addFeed(`🏆 ${winner} побеждает ${winner === a ? b : a} (${game}) → +${rub(pot)}`, 'duel');
     } else {
-      give(a, d.stake); give(b, d.stake);
+      settle(a, key, d.stake, d.stake); settle(b, key, d.stake, d.stake);
       addFeed(`🤝 Ничья: ${a} vs ${b} (${game}) — ставки вернулись`, 'duel');
     }
     d.result = { winner, scores, prize: winner ? pot : null };
@@ -420,6 +689,11 @@ function startDuel(d) {
     const sum = (arr) => r2(arr.reduce((s, it) => s + it.value, 0));
     d.timer = setTimeout(() => settleDuel(d, { [a]: sum(rolls[a]), [b]: sum(rolls[b]) }),
       1500 + d.config.count * (CASE_SPIN_MS + 800));
+  } else if (d.game === 'coin') {
+    const flip = randInt(2) ? 'heads' : 'tails';
+    d.state = { flip, startAt: now() + 800 };
+    const creatorWins = flip === d.config.side;
+    d.timer = setTimeout(() => settleDuel(d, { [a]: creatorWins ? 1 : 0, [b]: creatorWins ? 0 : 1 }), 800 + COIN_MS);
   }
 }
 function scoreDuelBoard(d) {
@@ -461,10 +735,10 @@ io.on('connection', (socket) => {
     if (u && u.token !== token) throw new Error('Этот ник уже занят');
     const isNew = !u;
     if (!u) {
-      u = db.users[name] = { name, token, balance: START_BALANCE, refills: 0, wagered: 0, best: 0, createdAt: now() };
+      u = db.users[name] = withDefaults({ name, token, createdAt: now() });
       save();
     }
-    if (me) return { me: publicUser(u) };
+    if (me) return { me: privateUser(u) };
     me = name;
     socket.join('u:' + me);
     online.set(me, (online.get(me) || 0) + 1);
@@ -472,7 +746,8 @@ io.on('connection', (socket) => {
     broadcastPlayers();
     setTimeout(broadcastDuels, 0);
     return {
-      me: publicUser(u), feed, chat, cases: CASES, towerDiff: TOWER_DIFF, towerRows: TOWER_ROWS,
+      me: privateUser(u), feed, chat, loanPlans: LOAN_PLANS, jobs: JOBS, grandmaCd: GRANDMA_CD,
+      arrestMax: ARREST_MAX, minuteMs: MIN, cases: CASES, towerDiff: TOWER_DIFF, towerRows: TOWER_ROWS,
       plane: planeView(), roulette: roulView(),
       mines: minesSoloView(me), towers: towersSoloView(me), serverNow: now(),
     };
@@ -492,26 +767,130 @@ io.on('connection', (socket) => {
     io.emit('chat', m);
   });
 
-  on('refill', () => {
-    const u = db.users[me];
-    u.balance = r2(u.balance + REFILL); u.refills = (u.refills || 0) + 1;
+  // ── мама-банк
+  const U = () => db.users[me];
+  const findLoan = (u, id) => {
+    const l = u.loans.find((x) => x.id === Number(id) && x.status === 'active');
+    if (!l) throw new Error('Долг не найден');
+    return l;
+  };
+  on('mom:loan', ({ plan }) => {
+    const P = LOAN_PLANS.find((p) => p.id === plan);
+    if (!P) throw new Error('Нет такого тарифа');
+    const u = U();
+    if (momStage(u) >= 1) { momSay(u, 'refuse'); throw new Error('Мама: «Сначала верни просроченное!»'); }
+    if (activeLoans(u).length >= MAX_LOANS) throw new Error(`Мама: «У тебя и так ${MAX_LOANS} долга!»`);
+    if (u.trust < P.minTrust) throw new Error(`Мама не доверяет тебе такие суммы (нужно доверие ${P.minTrust})`);
+    const owe = r2(P.amount * (1 + P.rate));
+    if (debtOf(u) + owe > creditLimit(u)) throw new Error(`Мама: «Мой лимит для тебя — ${rub(creditLimit(u))} долга»`);
+    const t = now();
+    const l = {
+      id: u.loanSeq++, plan: P.id, name: P.name, emoji: P.emoji, principal: P.amount, rate: P.rate, minutes: P.minutes,
+      base: owe, owed: owe, paid: 0, penalty: 0, takenAt: t, dueAt: t + P.minutes * MIN,
+      status: 'active', stage: 0, extended: false, wasOverdue: false, reminded: false, penMin: 0,
+    };
+    u.loans.unshift(l);
+    u.balance = r2(u.balance + P.amount);
+    u.stats.borrowed = r2(u.stats.borrowed + P.amount);
+    u.trust = clampTrust(u.trust - 2);
+    momSay(u, 'loan', { amount: rub(P.amount), owe: rub(owe), min: P.minutes });
+    addFeed(`💸 ${me} занимает у мамы ${rub(P.amount)} (${P.emoji} ${P.name}) — вернуть ${rub(owe)} за ${P.minutes} мин`, 'refill');
     save(); pushUser(me);
-    addFeed(`💸 ${me}: ещё ${rub(REFILL)} в долг у мамы (займ №${u.refills})`, 'refill');
+  });
+  on('mom:repay', ({ id, amount }) => {
+    const u = U();
+    const l = findLoan(u, id);
+    amount = amount === 'all' ? Math.min(l.owed, u.balance) : Math.min(parseBet(amount), l.owed);
+    amount = r2(amount);
+    if (!(amount > 0)) throw new Error('Нечем платить');
+    if (amount > u.balance + 1e-9) throw new Error('Недостаточно средств');
+    u.balance = r2(u.balance - amount);
+    payLoan(u, l, amount);
+    save(); pushUser(me);
+    return { paid: amount, closed: l.status !== 'active' };
+  });
+  on('mom:extend', ({ id }) => {
+    const u = U();
+    const l = findLoan(u, id);
+    if (l.extended) throw new Error('Отсрочка уже была');
+    if (now() >= l.dueAt) throw new Error('Поздно просить отсрочку — срок уже вышел');
+    const add = r2(l.owed * 0.1);
+    l.extended = true; l.reminded = false;
+    l.dueAt += Math.ceil(l.minutes / 2) * MIN;
+    l.owed = r2(l.owed + add); l.base = r2(l.base + add);
+    u.trust = clampTrust(u.trust - 5);
+    momSay(u, 'extend');
+    save(); pushUser(me);
+  });
+  on('mom:payFor', ({ to, amount }) => {
+    const f = db.users[to];
+    if (!f || to === me) throw new Error('За кого платим?');
+    const debt = debtOf(f);
+    if (!(debt > 0)) throw new Error(`У ${to} нет долгов`);
+    amount = r2(Math.min(parseBet(amount), debt));
+    const u = U();
+    if (amount > u.balance + 1e-9) throw new Error('Недостаточно средств');
+    u.balance = r2(u.balance - amount);
+    u.stats.helped = r2(u.stats.helped + amount);
+    repayLoans(f, amount);
+    momSay(f, 'helped', { amount: rub(amount) });
+    addFeed(`🦸 ${me} закрывает ${rub(amount)} долга ${to} перед мамой`, 'mom');
+    save(); pushUser(me); pushUser(to);
+    return { paid: amount };
+  });
+  on('job:start', ({ id }) => {
+    const J = JOBS[id];
+    if (!J) throw new Error('Нет такой работы');
+    const u = U();
+    if (u.job) throw new Error('Ты уже работаешь');
+    if (now() < (u.jobCd[id] || 0)) throw new Error('Эта работа ещё на перезарядке');
+    u.job = { id, startedAt: now(), endsAt: now() + J.secs * 1000 };
+    u.jobCd[id] = u.job.endsAt + J.cd * 1000;
+    save(); pushUser(me);
+  });
+  on('grandma', () => {
+    const u = U();
+    if (now() < u.grandmaAt + GRANDMA_CD) throw new Error('Бабушка спит, приходи позже');
+    const amount = 1000 + randInt(5) * 500;
+    u.grandmaAt = now();
+    u.balance = r2(u.balance + amount);
+    u.stats.grandma = r2(u.stats.grandma + amount);
+    addFeed(`👵 Бабушка дала ${me} ${rub(amount)} на мороженое`, 'win');
+    save(); pushUser(me);
+    return { amount };
   });
 
   on('transfer', ({ to, amount }) => {
     amount = parseBet(amount);
     if (!db.users[to] || to === me) throw new Error('Кому переводим?');
-    take(me, amount); db.users[me].wagered = r2(db.users[me].wagered - amount);
-    give(to, amount);
+    const u = U(), f = db.users[to];
+    if (amount > u.balance + 1e-9) throw new Error('Недостаточно средств');
+    u.balance = r2(u.balance - amount);
+    f.balance = r2(f.balance + amount);
+    save(); pushUser(me); pushUser(to);
     addFeed(`🤝 Перевод ${me} → ${to}: ${rub(amount)}`);
+  });
+
+  // ── кости соло
+  on('dice:roll', ({ bet, chance, dir }) => {
+    bet = parseBet(bet);
+    chance = Math.max(1, Math.min(95, Math.round(Number(chance) || 50)));
+    dir = dir === 'over' ? 'over' : 'under';
+    const mult = Math.floor((97 / chance) * 100) / 100;
+    placeBet(me, bet, 'dice');
+    const roll = randInt(10000) / 100; // 0.00–99.99
+    const win = dir === 'under' ? roll < chance : roll >= 100 - chance;
+    const payout = win ? r2(bet * mult) : 0;
+    const { taken } = settle(me, 'dice', bet, payout, win ? mult : null);
+    if (win && mult >= 10) addFeed(`🎲 ${me}: ×${mult} в костях → +${rub(payout)}`, 'win');
+    return { roll, win, mult, payout, taken };
   });
 
   // ── мины соло
   on('mines:start', ({ bet, mines }) => {
     if (minesSolo[me]) throw new Error('Игра уже идёт');
     bet = parseBet(bet); mines = clampInt(mines, 1, 24, 3);
-    take(me, bet);
+    placeBet(me, bet, 'mines');
     minesSolo[me] = { bet, mines, field: new Set(pickDistinct(MINES_CELLS, mines)), opened: [] };
     return { state: minesSoloView(me) };
   });
@@ -522,6 +901,7 @@ io.on('connection', (socket) => {
     if (s.opened.includes(cell)) throw new Error('Уже открыта');
     if (s.field.has(cell)) {
       delete minesSolo[me];
+      settle(me, 'mines', s.bet, 0);
       return { boom: true, cell, field: [...s.field], opened: s.opened };
     }
     s.opened.push(cell);
@@ -535,9 +915,9 @@ io.on('connection', (socket) => {
     const mult = minesMult(s.mines, s.opened.length);
     const win = r2(s.bet * mult);
     delete minesSolo[me];
-    give(me, win, mult);
+    const { taken } = settle(me, 'mines', s.bet, win, mult);
     if (mult >= 5) addFeed(`💣 ${me}: +${rub(win)} в минах (×${mult})`, 'win');
-    return { cashout: true, win, mult, field: [...s.field], opened: s.opened };
+    return { cashout: true, win, mult, taken, field: [...s.field], opened: s.opened };
   }
   on('mines:cashout', finishMines);
 
@@ -546,7 +926,7 @@ io.on('connection', (socket) => {
     if (towersSolo[me]) throw new Error('Игра уже идёт');
     if (!TOWER_DIFF[diff]) throw new Error('Неизвестная сложность');
     bet = parseBet(bet);
-    take(me, bet);
+    placeBet(me, bet, 'towers');
     towersSolo[me] = { bet, diff, layout: genTower(diff), picks: [] };
     return { state: towersSoloView(me) };
   });
@@ -557,6 +937,7 @@ io.on('connection', (socket) => {
     const row = s.picks.length;
     if (s.layout[row].includes(col)) {
       delete towersSolo[me];
+      settle(me, 'towers', s.bet, 0);
       return { boom: true, row, col, layout: s.layout, picks: s.picks };
     }
     s.picks.push(col);
@@ -570,9 +951,9 @@ io.on('connection', (socket) => {
     const mult = towerMult(s.diff, s.picks.length);
     const win = r2(s.bet * mult);
     delete towersSolo[me];
-    give(me, win, mult);
+    const { taken } = settle(me, 'towers', s.bet, win, mult);
     if (mult >= 5) addFeed(`🗼 ${me}: ${s.picks.length} этаж в башнях → +${rub(win)} (×${mult})`, 'win');
-    return { cashout: true, win, mult, layout: s.layout, picks: s.picks };
+    return { cashout: true, win, mult, taken, layout: s.layout, picks: s.picks };
   }
   on('towers:cashout', finishTowers);
 
@@ -580,11 +961,11 @@ io.on('connection', (socket) => {
   on('case:open', ({ id }) => {
     const c = caseById(id);
     if (!c) throw new Error('Нет такого кейса');
-    take(me, c.price);
+    placeBet(me, c.price, 'cases');
     const it = rollCase(c);
     const name = me;
     setTimeout(() => {
-      give(name, it.value, it.value / c.price);
+      settle(name, 'cases', c.price, it.value, it.value / c.price);
       if (it.value >= c.price * 5) addFeed(`📦 ${name}: ${it.emoji} ${it.name} (${rub(it.value)}) из кейса «${c.name}»`, 'win');
     }, CASE_SPIN_MS);
     return { item: itemView(it), spinMs: CASE_SPIN_MS };
@@ -596,7 +977,7 @@ io.on('connection', (socket) => {
     if (plane.bets[me]) throw new Error('Ставка уже сделана');
     amount = parseBet(amount);
     auto = Number(auto) >= 1.01 ? Math.floor(Number(auto) * 100) / 100 : null;
-    take(me, amount);
+    placeBet(me, amount, 'plane');
     plane.bets[me] = { amount, auto, cashedAt: null, win: 0 };
     emitPlane();
   });
@@ -620,7 +1001,7 @@ io.on('connection', (socket) => {
     else if (type === 'dozen' || type === 'column') value = clampInt(value, 1, 3, 1);
     else value = null;
     if (roul.bets.filter((b) => b.name === me).length >= 60) throw new Error('Слишком много ставок');
-    take(me, amount);
+    placeBet(me, amount, 'roulette', !roul.bets.some((b) => b.name === me));
     roul.bets.push({ name: me, type, value, amount });
     emitRoul();
   });
@@ -630,7 +1011,7 @@ io.on('connection', (socket) => {
     if (!mine.length) return;
     roul.bets = roul.bets.filter((b) => b.name !== me);
     const sum = r2(mine.reduce((s, b) => s + b.amount, 0));
-    give(me, sum); db.users[me].wagered = r2(db.users[me].wagered - sum);
+    refund(me, sum, 'roulette');
     emitRoul();
   });
 
@@ -641,15 +1022,17 @@ io.on('connection', (socket) => {
     config = config || {};
     let cfg = {};
     if (game === 'mines') cfg = { mines: clampInt(config.mines, 1, 24, 5) };
+    if (game === 'crash') cfg = { blind: config.blind === true || config.blind === 'true' || config.blind === '1' };
+    if (game === 'coin') cfg = { side: config.side === 'tails' ? 'tails' : 'heads' };
     if (game === 'towers') { if (!TOWER_DIFF[config.diff]) throw new Error('Неизвестная сложность'); cfg = { diff: config.diff }; }
     if (game === 'cases') {
       const c = caseById(config.caseId);
       if (!c) throw new Error('Нет такого кейса');
-      cfg = { caseId: c.id, count: clampInt(config.count, 1, 5, 1) };
+      cfg = { caseId: c.id, count: clampInt(config.count, 1, 5, 1), mode: config.mode === 'crazy' ? 'crazy' : 'normal' };
       stake = c.price * cfg.count;
     }
     stake = parseBet(stake);
-    take(me, stake);
+    placeBet(me, stake, DUEL_KEY[game]);
     const d = { id: duelSeq++, game, stake, config: cfg, creator: me, players: [me], status: 'open', createdAt: now(), state: null, result: null };
     duels.set(d.id, d);
     addFeed(`⚔️ ${me} ищет соперника: ${GAME_NAMES[game]} на ${rub(stake)}`, 'duel');
@@ -660,7 +1043,7 @@ io.on('connection', (socket) => {
     const d = duels.get(Number(id));
     if (!d || d.creator !== me || d.status !== 'open') throw new Error('Нельзя отменить');
     duels.delete(d.id);
-    give(me, d.stake); db.users[me].wagered = r2(db.users[me].wagered - d.stake);
+    refund(me, d.stake, DUEL_KEY[d.game]);
     broadcastDuels();
   });
   on('duel:join', ({ id }) => {
@@ -668,7 +1051,7 @@ io.on('connection', (socket) => {
     if (!d || d.status !== 'open') throw new Error('Дуэль уже недоступна');
     if (d.creator === me) throw new Error('Нельзя играть с самим собой 🙂');
     if (activeDuelOf(me)) throw new Error('У тебя уже есть активная дуэль');
-    take(me, d.stake);
+    placeBet(me, d.stake, DUEL_KEY[d.game]);
     d.players.push(me);
     startDuel(d);
     broadcastDuels();
@@ -737,6 +1120,7 @@ io.on('connection', (socket) => {
   });
 });
 
+setInterval(momTick, 2000);
 planeBetting();
 roulBetting();
 server.listen(PORT, () => console.log(`🎰 РофлКазино запущено: http://localhost:${PORT}`));

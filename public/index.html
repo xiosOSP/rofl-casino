@@ -5,13 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>РофлКазино</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎰</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=Unbounded:wght@600;800&display=swap">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <div id="login" class="login">
   <div class="login-card">
     <div class="logo big">🎰 Рофл<span>Казино</span></div>
-    <p class="muted">Демо-счёт, ненастоящие рубли. Только для своих.</p>
+    <p class="muted">Демо-счёт, ненастоящие рубли. Только для своих.<br>Не хватает денег — у мамы всегда можно занять 👩</p>
     <input id="nick" maxlength="16" placeholder="Твой ник" autocomplete="off">
     <button id="loginBtn" class="btn primary wide">Войти</button>
     <div id="loginErr" class="err"></div>
@@ -28,11 +30,15 @@
       <button data-tab="roulette">🎡 Рулетка</button>
       <button data-tab="plane">✈️ Самолётик</button>
       <button data-tab="cases">📦 Кейсы</button>
+      <button data-tab="dice">🎲 Кости</button>
+      <button data-tab="mom">👩 Мама</button>
+      <button data-tab="stats">🏆 Рейтинг</button>
     </nav>
     <div class="wallet">
       <div class="me-name" id="meName"></div>
       <div class="balance" id="balance">0 ₽</div>
-      <button class="btn small" id="refillBtn" title="Демо-пополнение">+10 000 ₽</button>
+      <button class="debt-pill" id="debtPill" data-act="gomom" title="Мама-банк">👩 Мама</button>
+      <button class="btn small icon" id="soundBtn" title="Звук">🔊</button>
     </div>
   </header>
 
@@ -44,6 +50,9 @@
       <section class="tab" id="tab-roulette"></section>
       <section class="tab" id="tab-plane"></section>
       <section class="tab" id="tab-cases"></section>
+      <section class="tab" id="tab-dice"></section>
+      <section class="tab" id="tab-mom"></section>
+      <section class="tab" id="tab-stats"></section>
     </main>
     <aside class="side">
       <div class="panel">
@@ -51,8 +60,9 @@
         <div id="players"></div>
         <div class="transfer">
           <select id="trTo"></select>
-          <input id="trAmount" type="number" min="1" placeholder="₽">
-          <button class="btn small" id="trBtn">Перевести</button>
+          <input id="trAmount" type="number" min="1" placeholder="Сумма, ₽">
+          <button class="btn small" id="trBtn">🤝 Перевести</button>
+          <button class="btn small" id="payForBtn" title="Отдать деньги маме друга в счёт его долга">🦸 Закрыть его долг</button>
         </div>
       </div>
       <div class="panel">
@@ -70,5 +80,6 @@
 <div id="toasts" class="toasts"></div>
 <script src="/socket.io/socket.io.js"></script>
 <script src="app.js"></script>
+<script src="v2.js"></script>
 </body>
 </html>
