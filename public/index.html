@@ -33,10 +33,10 @@
       <button data-tab="dice">🎲 Кости</button>
       <button data-tab="estate">🏢 Имущество</button>
       <button data-tab="mom">👩 Мама</button>
-      <button data-tab="stats">🏆 Рейтинг</button>
     </nav>
     <div class="wallet">
-      <div class="me-name" id="meName"></div>
+      <button class="me-name nick" id="meName" data-act="profile" title="Мой профиль"></button>
+      <button class="btn small icon" id="meBtn" data-act="profile" title="Мой профиль">👤</button>
       <div class="balance" id="balance">0 ₽</div>
       <button class="debt-pill" id="debtPill" data-act="gomom" title="Мама-банк">👩 Мама</button>
       <button class="btn small icon" id="soundBtn" title="Звук">🔊</button>
@@ -54,11 +54,10 @@
       <section class="tab" id="tab-dice"></section>
       <section class="tab" id="tab-estate"></section>
       <section class="tab" id="tab-mom"></section>
-      <section class="tab" id="tab-stats"></section>
     </main>
     <aside class="side">
       <div class="panel">
-        <h3>Игроки</h3>
+        <h3>Игроки <span class="muted small" style="text-transform:none;letter-spacing:0">— нажми на ник, чтобы открыть профиль</span></h3>
         <div id="players"></div>
         <div class="transfer">
           <select id="trTo"></select>
@@ -79,6 +78,7 @@
     </aside>
   </div>
 </div>
+<div id="profileModal" class="modal hidden"><div class="modal-card"><button class="modal-x" data-act="closeProfile" title="Закрыть">✕</button><div id="profileBody"></div></div></div>
 <div id="toasts" class="toasts"></div>
 <script src="/socket.io/socket.io.js"></script>
 <script src="app.js"></script>

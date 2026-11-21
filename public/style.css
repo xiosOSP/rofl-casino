@@ -419,3 +419,78 @@ input[type=range] { width: 100%; accent-color: var(--accent); padding: 0; backgr
   .tabs { order: 3; flex-basis: 100%; }
   .wallet { margin-left: auto; }
 }
+
+/* ── v3: ник-ссылки и профиль ── */
+.nick { cursor: pointer; color: var(--text); font-weight: 700; }
+.nick:hover { color: var(--accent2); text-decoration: underline; text-underline-offset: 3px; }
+button.me-name { background: none; border: 0; padding: 0; color: var(--muted); font-size: 13px; }
+#meBtn { display: none; }
+@media (max-width: 1450px) { #meBtn { display: inline-block; } }
+.player { cursor: pointer; border-radius: 10px; transition: background .15s; }
+.player:hover { background: rgba(139, 92, 246, .1); }
+body.modal-open { overflow: hidden; }
+.modal { position: fixed; inset: 0; z-index: 150; background: rgba(5, 4, 12, .72); backdrop-filter: blur(6px); display: grid; place-items: center; padding: 16px; animation: tin .2s; }
+.modal-card { position: relative; width: 100%; max-width: 760px; max-height: calc(100vh - 32px); overflow-y: auto; background: linear-gradient(160deg, rgba(40, 34, 82, .97), rgba(16, 14, 34, .97)); border: 1px solid var(--line); border-radius: 22px; padding: 22px; box-shadow: 0 30px 80px rgba(0, 0, 0, .6); }
+.modal-card h3 { margin: 18px 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); }
+.modal-x { position: absolute; right: 14px; top: 14px; width: 36px; height: 36px; border-radius: 50%; border: 1px solid var(--line); background: var(--card2); font-size: 16px; }
+.prof-head { display: flex; gap: 16px; align-items: center; padding-right: 40px; }
+.prof-head .st { display: inline-block; width: 10px; height: 10px; vertical-align: middle; }
+.avatar { width: 72px; height: 72px; flex: none; border-radius: 50%; display: grid; place-items: center; font-family: var(--head); font-size: 32px; font-weight: 800; background: linear-gradient(135deg, #8b5cf6, #ec4899); box-shadow: 0 8px 30px rgba(139, 92, 246, .45); }
+.titles { margin-top: 6px; font-size: 13px; font-weight: 700; }
+.tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 16px; }
+.tile { background: var(--bg2); border: 1px solid var(--line); border-radius: 12px; padding: 10px; display: grid; gap: 2px; min-width: 0; }
+.tile b { font-family: var(--head); font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prof-acts { margin-top: 12px; }
+.prof-acts input { flex: 1; min-width: 100px; }
+.est-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.est-chip { background: var(--bg2); border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; font-size: 13px; }
+@media (max-width: 760px) {
+  .tiles { grid-template-columns: repeat(2, 1fr); }
+  .modal { padding: 8px; }
+  .modal-card { padding: 16px; max-height: calc(100vh - 16px); }
+  .avatar { width: 56px; height: 56px; font-size: 24px; }
+}
+
+/* ── v3: новая рулетка ── */
+.rbet-bar { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 14px; }
+.ramount { display: grid; gap: 4px; }
+.amount-box { display: flex; align-items: center; background: rgba(10, 9, 24, .7); border: 1px solid var(--line); border-radius: 14px; padding: 0 12px; }
+.amount-box input { border: 0; background: none; font-family: var(--head); font-size: 20px; font-weight: 800; width: 150px; padding: 10px 0; }
+.amount-box span { color: var(--gold); font-weight: 800; }
+.quick { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; }
+.qbtn { background: var(--card2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font-weight: 800; font-size: 14px; }
+.qbtn:hover { border-color: var(--accent); background: rgba(139, 92, 246, .25); }
+.rmine { display: flex; gap: 8px; align-items: center; white-space: nowrap; }
+.rbig-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+.rcol { display: grid; gap: 8px; align-content: start; transition: opacity .3s; }
+.rcol.lose { opacity: .45; }
+.rcol.win .rbig { box-shadow: 0 0 0 3px var(--gold), 0 0 30px rgba(250, 204, 21, .5); }
+.rbig { position: relative; border: 0; border-radius: 18px; padding: 18px 12px 14px; display: grid; gap: 2px; justify-items: center; color: #fff; transition: transform .12s, filter .12s; box-shadow: 0 10px 28px rgba(0, 0, 0, .35), inset 0 -5px 0 rgba(0, 0, 0, .25); }
+.rbig.red { background: linear-gradient(160deg, #f43f5e, #b91c1c); }
+.rbig.green { background: linear-gradient(160deg, #22c55e, #047857); }
+.rbig.black { background: linear-gradient(160deg, #3f3f5a, #15151f); }
+.rbig:hover:not(:disabled) { transform: translateY(-2px); filter: brightness(1.1); }
+.rbig:active:not(:disabled) { transform: translateY(1px); }
+.rbig:disabled { filter: grayscale(.5) brightness(.75); cursor: not-allowed; }
+.rbig-t { font-family: var(--head); font-size: 20px; font-weight: 800; }
+.rbig-x { font-size: 15px; font-weight: 800; opacity: .9; }
+.rbig-play { margin-top: 8px; background: rgba(255, 255, 255, .18); border-radius: 999px; padding: 6px 22px; font-weight: 800; font-size: 14px; letter-spacing: .3px; }
+.rbig .cb { top: 8px; right: 10px; font-size: 12px; padding: 2px 8px; }
+.rcol-head { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); padding: 0 4px; }
+.rcol-head b { color: var(--gold); }
+.rcol-list { display: grid; gap: 4px; max-height: 260px; overflow-y: auto; }
+.rcol-list > div { display: flex; justify-content: space-between; gap: 8px; background: var(--bg2); border-radius: 10px; padding: 7px 10px; font-size: 14px; }
+.rcol-list > div.mine { border: 1px solid var(--accent); }
+.radv { margin-top: 16px; }
+.radv summary { cursor: pointer; font-weight: 700; color: var(--accent2); padding: 6px 0; }
+@media (max-width: 760px) {
+  .rbig-row { gap: 6px; }
+  .rbig { padding: 12px 4px 10px; border-radius: 14px; }
+  .rbig-t { font-size: 14px; }
+  .rbig-x { font-size: 12px; }
+  .rbig-play { padding: 4px 10px; font-size: 12px; }
+  .amount-box input { width: 110px; font-size: 17px; }
+  .qbtn { padding: 8px 9px; font-size: 13px; }
+  .rcol-list > div { font-size: 12px; padding: 6px; }
+}
+.rbig .cb { position: absolute; top: 8px; right: 10px; background: var(--gold); color: #1a1400; font-weight: 900; border-radius: 999px; font-size: 12px; padding: 2px 8px; pointer-events: none; }

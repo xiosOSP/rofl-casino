@@ -529,7 +529,7 @@ const CASES = [
     { name: 'Участок на Луне', emoji: '🌕', value: 2500000, w: 1 },
   ] },
 ];
-const CASE_RTP = 0.95;
+const CASE_RTP = 0.97;
 for (const c of CASES) {
   // подбираем вес самого дешёвого предмета так, чтобы возврат кейса был ≈ CASE_RTP
   const low = c.items.reduce((m, i) => (i.value < m.value ? i : m), c.items[0]);
@@ -1042,6 +1042,21 @@ io.on('connection', (socket) => {
     const u = admin();
     u.cheats.rouletteNext = n === null || n === '' || n === undefined ? null : clampInt(n, 0, 36, 0);
     save(); pushUser(me);
+  });
+
+  // ── профиль игрока (видят все, без секретов)
+  on('profile:get', ({ name }) => {
+    const u = db.users[String(name || '')];
+    if (!u) throw new Error('Игрок не найден');
+    const place = Object.values(db.users).map(publicUser).sort((a, b) => b.net - a.net).findIndex((p) => p.name === u.name) + 1;
+    return {
+      profile: {
+        ...publicUser(u), place, total: Object.keys(db.users).length, createdAt: u.createdAt, lastLife: u.lastLife || null,
+        stats: u.stats, history: u.history.slice(0, 20),
+        estate: u.props.map((p) => ({ type: p.type, level: p.level, state: p.state, tenant: p.tenant ? p.tenant.emoji : null })),
+        activeLoans: activeLoans(u).length,
+      },
+    };
   });
 
   // ── имущество

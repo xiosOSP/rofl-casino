@@ -126,14 +126,6 @@ function v2Build() {
       <div class="panel"><h3>Кредитная история</h3><div id="momHistory"></div></div>
     </div>`;
 
-  $('#tab-stats').innerHTML = `
-    <div class="panel"><h2>🏆 Рейтинг</h2><div class="table-wrap"><table class="tbl" id="rankTbl"></table></div>
-      <div class="rules" style="margin-top:10px">Капитал = баланс − долг маме + имущество (по цене продажи). Именно он решает, кто круче.</div></div>
-    <div class="grid-eq">
-      <div class="panel"><h3>Моя статистика</h3><div class="table-wrap"><table class="tbl" id="myStats"></table></div><div class="kv" id="myMomStats"></div></div>
-      <div class="panel"><h3>Последние ставки</h3><div id="myHistory" class="bets-table" style="max-height:520px"></div></div>
-    </div>`;
-
   $('#tab-dice').innerHTML = `
     <div class="grid2">
       <div class="panel controls"><h2>🎲 Кости</h2>${betField('dBet')}
@@ -174,7 +166,7 @@ function v2OnMe() {
     lastHistT = h.t;
   }
   renderMomAll();
-  renderMyStats();
+  refreshProfile();
   renderCheats();
 }
 socket.on('mom', (m) => toast('👩 Мама: ' + m.text, 'mom'));
@@ -183,14 +175,14 @@ socket.on('jobDone', (j) => toast(`${j.emoji} ${j.name} — готово: +${rub
 
 function v2RenderPlayers() {
   const list = S.players;
-  $('#players').innerHTML = list.map((p) => `<div class="player"><span class="st ${p.online ? 'on' : ''}"></span>
-    <div class="nm">${esc(p.name)}${p.name === me() ? ' <span class="muted">(ты)</span>' : ''}
+  $('#players').innerHTML = list.map((p, i) => `<div class="player" data-act="profile" data-name="${esc(p.name)}"><span class="st ${p.online ? 'on' : ''}"></span>
+    <div class="nm">${['🥇 ', '🥈 ', '🥉 '][i] || ''}${esc(p.name)}${p.name === me() ? ' <span class="muted">(ты)</span>' : ''}
       <div class="debt ${p.stage ? 'bad' : ''}">${p.debt > 0 ? `долг маме ${rub(p.debt)}${p.stage ? ' ' + STAGE[p.stage].mood : ''}` : 'без долгов'} · 🤝 ${p.trust}</div></div>
     <div style="text-align:right"><div class="bl">${rub(p.balance)}</div><div class="debt">капитал ${rub(p.net)}</div></div></div>`).join('');
   const sel = $('#trTo'), cur = sel.value;
   sel.innerHTML = list.filter((p) => p.name !== me()).map((p) => `<option value="${esc(p.name)}">${esc(p.name)}${p.debt > 0 ? ` (долг ${rub(p.debt)})` : ''}</option>`).join('') || '<option value="">нет игроков</option>';
   if (cur) sel.value = cur;
-  renderRank();
+  refreshProfile();
 }
 $('#payForBtn').onclick = async () => {
   const r = await emit('mom:payFor', { to: $('#trTo').value, amount: $('#trAmount').value });
@@ -351,40 +343,102 @@ function v2Frame() {
   }
 }
 
-// ───────────────────────── рейтинг и статистика ─────────────────────────
-function renderRank() {
-  if (!v2Built) return;
-  $('#rankTbl').innerHTML = `<tr><th>#</th><th>Игрок</th><th class="num">Капитал</th><th class="num">Баланс</th><th class="num">Долг маме</th><th class="num">Имущество</th><th class="num">🤝</th><th class="num">Рекорд</th><th>Статус</th></tr>` +
-    S.players.map((p, i) => `<tr class="${p.name === me() ? 'me' : ''}"><td>${['🥇', '🥈', '🥉'][i] || i + 1}</td>
-      <td><b>${esc(p.name)}</b> ${p.online ? '🟢' : ''}</td><td class="num ${p.net < 0 ? 'neg' : ''}"><b>${rub(p.net)}</b></td>
-      <td class="num">${rub(p.balance)}</td><td class="num ${p.debt ? 'neg' : ''}">${p.debt ? rub(p.debt) : '—'}</td><td class="num">${p.assets ? `${rub(p.assets)} <span class="muted small">(${p.props})</span>` : '—'}</td>
-      <td class="num">${p.trust}</td><td class="num">${p.best ? '×' + p.best.toFixed(2) : '—'}</td><td>${titlesOf(p)}</td></tr>`).join('');
+// ───────────────────────── профиль игрока ─────────────────────────
+S.profileName = null;
+let profileTimer = null;
+async function openProfile(name) {
+  S.profileName = name || me();
+  $('#profileModal').classList.remove('hidden');
+  document.body.classList.add('modal-open');
+  $('#profileBody').innerHTML = '<div class="muted" style="padding:40px;text-align:center">Загружаю…</div>';
+  await loadProfile();
 }
-function renderMyStats() {
-  if (!v2Built || !S.me.stats) return;
-  const st = S.me.stats;
-  if (!changed('mystats', [st, S.me.history.length && S.me.history[0].t])) return;
-  const rows = Object.entries(st.games).filter(([, g]) => g.played || g.wagered);
-  let tw = 0, tr = 0;
-  $('#myStats').innerHTML = `<tr><th>Игра</th><th class="num">Игр</th><th class="num">Побед</th><th class="num">Поставлено</th><th class="num">Получено</th><th class="num">Профит</th></tr>` +
-    (rows.length ? rows.map(([k, g]) => {
-      tw += g.wagered; tr += g.returned;
-      const p = r2(g.returned - g.wagered);
-      return `<tr><td>${GAME_LABEL[k] || k}</td><td class="num">${g.played}</td><td class="num">${g.won}</td><td class="num">${rub(g.wagered)}</td><td class="num">${rub(g.returned)}</td><td class="num ${p >= 0 ? 'pos' : 'neg'}">${p >= 0 ? '+' : ''}${rub(p)}</td></tr>`;
-    }).join('') + `<tr><td><b>Итого</b></td><td></td><td></td><td class="num"><b>${rub(tw)}</b></td><td class="num"><b>${rub(tr)}</b></td><td class="num ${tr - tw >= 0 ? 'pos' : 'neg'}"><b>${tr - tw >= 0 ? '+' : ''}${rub(tr - tw)}</b></td></tr>`
-      : '<tr><td colspan="6" class="muted">Ещё не играл(а)</td></tr>');
-  const kv = [['Занято у мамы', rub(st.borrowed)], ['Возвращено маме', rub(st.repaid)], ['Пени набежало', rub(st.penalties)],
-    ['Мама конфисковала', rub(st.confiscated)], ['Вернул(а) вовремя / с просрочкой', `${st.onTime} / ${st.late}`], ['Просрочек всего', st.overdue],
-    ['Подработок', `${st.jobs} (+${rub(st.jobsEarned)})`], ['От бабушки', rub(st.grandma)], ['Закрыто долгов друзей', rub(st.helped)],
+function closeProfile() {
+  S.profileName = null;
+  $('#profileModal').classList.add('hidden');
+  document.body.classList.remove('modal-open');
+}
+function refreshProfile() { // обновить открытый профиль не чаще раза в 1.5 с
+  if (!S.profileName || profileTimer) return;
+  profileTimer = setTimeout(() => { profileTimer = null; if (S.profileName) loadProfile(); }, 1500);
+}
+async function loadProfile() {
+  const name = S.profileName;
+  const r = await emitRaw('profile:get', { name });
+  if (S.profileName !== name) return;
+  if (r.error) { $('#profileBody').innerHTML = `<div class="err" style="padding:30px">${esc(r.error)}</div>`; return; }
+  renderProfile(r.profile);
+}
+function renderProfile(p) {
+  const mine = p.name === me();
+  const st = p.stats || {};
+  const games = Object.entries(st.games || {}).filter(([, g]) => g.played || g.wagered);
+  let tw = 0, tr = 0, played = 0, won = 0;
+  const rows = games.map(([k, g]) => {
+    tw += g.wagered; tr += g.returned; played += g.played; won += g.won;
+    const pr = r2(g.returned - g.wagered);
+    return `<tr><td>${GAME_LABEL[k] || k}</td><td class="num">${g.played}</td><td class="num">${g.won}</td><td class="num">${rub(g.wagered)}</td><td class="num ${pr >= 0 ? 'pos' : 'neg'}">${pr >= 0 ? '+' : ''}${rub(pr)}</td></tr>`;
+  }).join('');
+  const profit = r2(tr - tw);
+  const fav = games.slice().sort((a, b) => b[1].played - a[1].played)[0];
+  const tiles = [
+    ['💰 Капитал', rub(p.net), p.net < 0 ? 'neg' : ''], ['💵 Баланс', rub(p.balance), ''],
+    ['👩 Долг маме', p.debt ? rub(p.debt) : 'нет', p.debt ? 'neg' : 'pos'], ['🏢 Имущество', p.assets ? `${rub(p.assets)} (${p.props})` : 'нет', ''],
+    ['🤝 Доверие мамы', `${p.trust}/100`, ''], ['🚀 Рекорд', p.best ? '×' + p.best.toFixed(2) : '—', ''],
+    ['🎮 Игр / побед', `${played} / ${won}`, ''], ['📈 Профит в играх', `${profit >= 0 ? '+' : ''}${rub(profit)}`, profit >= 0 ? 'pos' : 'neg'],
+  ];
+  const kv = [['Любимая игра', fav ? GAME_LABEL[fav[0]] || fav[0] : '—'], ['Занято у мамы', rub(st.borrowed || 0)], ['Возвращено маме', rub(st.repaid || 0)],
+    ['Пени набежало', rub(st.penalties || 0)], ['Мама конфисковала', rub(st.confiscated || 0)],
+    ['Вовремя / с просрочкой', `${st.onTime || 0} / ${st.late || 0}`], ['Подработок', `${st.jobs || 0} (+${rub(st.jobsEarned || 0)})`],
+    ['От бабушки', rub(st.grandma || 0)], ['Закрыто долгов друзей', rub(st.helped || 0)],
     ['Вложено в имущество', rub(st.propSpent || 0)], ['Доход с имущества', rub(st.propIncome || 0)]];
-  $('#myMomStats').innerHTML = kv.map(([k, v]) => `<span class="muted">${k}</span><b>${v}</b>`).join('');
-  const h = S.me.history;
-  $('#myHistory').innerHTML = h.length ? h.map((x) => {
-    const p = r2(x.payout - x.stake);
+  const est = (p.estate || []).map((e) => {
+    const d = S.propsCatalog && S.propsCatalog[e.type];
+    if (!d) return '';
+    const state = d.kind === 'biz' ? 'работает' : e.state === 'rented' ? `сдана ${e.tenant || ''}` : 'пустует';
+    return `<span class="est-chip">${d.emoji} ${d.name} <span class="muted small">ур.${e.level} · ${state}</span></span>`;
+  }).join('');
+  const hist = (p.history || []).map((x) => {
+    const pr = r2(x.payout - x.stake);
     return `<div><span><span class="muted small">${timeHM(x.t)}</span> ${GAME_LABEL[x.game] || x.game} · ${rub(x.stake)}</span>
-      <span class="${p >= 0 ? 'ok' : 'neg'}">${p >= 0 ? '+' : ''}${rub(p)}${x.taken ? ` <span class="neg small">(мама −${rub(x.taken)})</span>` : ''}</span></div>`;
-  }).join('') : '<div class="muted">Ставок пока нет</div>';
+      <span class="${pr >= 0 ? 'ok' : 'neg'}">${pr >= 0 ? '+' : ''}${rub(pr)}${x.taken ? ` <span class="neg small">(мама −${rub(x.taken)})</span>` : ''}</span></div>`;
+  }).join('');
+  const medal = ['🥇', '🥈', '🥉'][p.place - 1] || `#${p.place}`;
+  $('#profileBody').innerHTML = `
+    <div class="prof-head">
+      <div class="avatar">${esc(p.name[0].toUpperCase())}</div>
+      <div style="min-width:0">
+        <h2 style="margin:0">${esc(p.name)} ${p.online ? '<span class="st on" title="онлайн"></span>' : ''}</h2>
+        <div class="muted small">${medal} место из ${p.total} по капиталу · жизнь №${p.lives}${p.stage ? ' · ' + STAGE[p.stage].badge : ''}</div>
+        <div class="titles">${titlesOf(p) || '<span class="muted small">без титулов</span>'}</div>
+      </div>
+    </div>
+    <div class="tiles">${tiles.map(([k, val, c]) => `<div class="tile"><span class="muted small">${k}</span><b class="${c}">${val}</b></div>`).join('')}</div>
+    ${mine ? '' : `<div class="row prof-acts"><input id="profAmount" type="number" min="1" placeholder="Сумма, ₽">
+      <button class="btn small" data-act="profTransfer">🤝 Перевести</button>
+      ${p.debt ? '<button class="btn small" data-act="profPayFor">🦸 Закрыть его долг</button>' : ''}</div>`}
+    <h3>Статистика по играм</h3>
+    <div class="table-wrap"><table class="tbl"><tr><th>Игра</th><th class="num">Игр</th><th class="num">Побед</th><th class="num">Поставлено</th><th class="num">Профит</th></tr>
+      ${rows || '<tr><td colspan="5" class="muted">Ещё не играл(а)</td></tr>'}</table></div>
+    <h3>Мама, подработка, имущество</h3><div class="kv">${kv.map(([k, val]) => `<span class="muted">${k}</span><b>${val}</b>`).join('')}</div>
+    ${est ? `<h3>Имущество</h3><div class="est-chips">${est}</div>` : ''}
+    ${p.lastLife ? `<div class="rules" style="margin-top:12px">♻️ Прошлая жизнь №${p.lastLife.life} закончилась с капиталом ${rub(p.lastLife.net)}${p.lastLife.debt ? ` и долгом маме ${rub(p.lastLife.debt)}` : ''}.</div>` : ''}
+    <h3>Последние ставки</h3><div class="bets-table">${hist || '<div class="muted">Ставок пока нет</div>'}</div>`;
 }
+$('#profileModal').addEventListener('click', (e) => { if (e.target.id === 'profileModal') closeProfile(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && S.profileName) closeProfile(); });
+Object.assign(ACT, {
+  profile(b) { openProfile(b.dataset.name || me()); },
+  closeProfile() { closeProfile(); },
+  async profTransfer() {
+    const r = await emit('transfer', { to: S.profileName, amount: $('#profAmount').value });
+    if (r) { toast('🤝 Перевод отправлен', 'ok'); loadProfile(); }
+  },
+  async profPayFor() {
+    const r = await emit('mom:payFor', { to: S.profileName, amount: $('#profAmount').value });
+    if (r) { toast(`🦸 Закрыто ${rub(r.paid)} долга`, 'ok'); loadProfile(); }
+  },
+});
 
 // ───────────────────────── кости ─────────────────────────
 S.diceDir = 'under';

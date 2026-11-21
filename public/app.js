@@ -5,6 +5,7 @@ const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const r2 = (x) => Math.round(x * 100) / 100;
 const rub = (x) => r2(x).toLocaleString('ru-RU', { maximumFractionDigits: 2 }) + ' ₽';
+const nick = (n) => `<b class="nick" data-act="profile" data-name="${esc(n)}">${esc(n)}</b>`;
 const range = (a, b) => Array.from({ length: b - a + 1 }, (_, i) => a + i);
 const ls = {
   get(k) { try { return localStorage.getItem(k); } catch { return null; } },
@@ -166,24 +167,34 @@ function buildUI() {
       <div class="rtimer" style="margin-top:6px"><div id="rTimer"></div></div>
     </div>
     <div class="panel">
-      <div class="row" style="margin-bottom:10px"><span class="muted">Фишка:</span>
-        <div class="chips" id="rChips">${[10, 50, 100, 500, 1000, 5000].map((v) => `<button class="chip" data-act="chip" data-v="${v}">${v.toLocaleString('ru-RU')}</button>`).join('')}</div>
-        <input id="rChipCustom" type="number" min="1" placeholder="своя" style="width:90px">
-        <span style="flex:1"></span><span>Мои ставки: <b id="rMine">0 ₽</b></span>
-        <button class="btn small" data-act="rclear">Убрать мои</button></div>
-      <div class="board"><button class="rb green zero" style="grid-column:1;grid-row:1/span 3" data-act="rbet" data-type="num" data-v="0">0</button>${nums}${cols}</div>
-      <div class="board-doz">${[1, 2, 3].map((v) => `<button class="rb outer" data-act="rbet" data-type="dozen" data-v="${v}">${v * 12 - 11}–${v * 12}</button>`).join('')}</div>
-      <div class="board-out">
-        <button class="rb outer" data-act="rbet" data-type="low">1–18</button>
-        <button class="rb outer" data-act="rbet" data-type="even">Чёт</button>
-        <button class="rb red" data-act="rbet" data-type="red">Красное</button>
-        <button class="rb black" data-act="rbet" data-type="black">Чёрное</button>
-        <button class="rb outer" data-act="rbet" data-type="odd">Нечет</button>
-        <button class="rb outer" data-act="rbet" data-type="high">19–36</button>
+      <div class="rbet-bar">
+        <div class="ramount"><span class="muted small">Ставка</span>
+          <div class="amount-box"><input id="rAmount" type="number" min="1" value="100"><span>₽</span></div></div>
+        <div class="quick">${[['add', 10, '+10'], ['add', 100, '+100'], ['add', 1000, '+1 000'], ['add', 10000, '+10 000'], ['half', 0, '½'], ['dbl', 0, '×2'], ['max', 0, 'Всё'], ['clear', 0, 'Сброс']]
+    .map(([op, v, l]) => `<button class="qbtn" data-act="ramt" data-op="${op}" data-v="${v}">${l}</button>`).join('')}</div>
+        <div class="rmine">Мои ставки: <b id="rMine">0 ₽</b><button class="btn small" data-act="rclear">Убрать</button></div>
       </div>
-      <div class="rules" style="margin-top:10px">Число — ×36, дюжина/колонка — ×3, цвет/чёт/половина — ×2. Стол общий: друг видит твои ставки.</div>
-    </div>
-    <div class="panel"><h3>Ставки за столом</h3><div class="bets-table" id="rBets"></div></div>`;
+      <div class="rbig-row">${[['red', '', 'Красное', '×2', 'red'], ['num', '0', 'Зеро', '×36', 'green'], ['black', '', 'Чёрное', '×2', 'black']].map(([t, v, l, x, c]) => `
+        <div class="rcol" id="rcol-${c}">
+          <button class="rbig ${c}" data-act="rbet" data-type="${t}" ${v !== '' ? `data-v="${v}"` : ''}>
+            <span class="rbig-t">${l}</span><span class="rbig-x">${x}</span><span class="rbig-play">Играть</span></button>
+          <div class="rcol-head"><span id="rcnt-${c}">0 игроков</span><b id="rsum-${c}">0 ₽</b></div>
+          <div class="rcol-list" id="rlist-${c}"></div>
+        </div>`).join('')}
+      </div>
+      <details class="radv"><summary>🎯 Числа, дюжины и другие ставки</summary>
+        <div class="board" style="margin-top:12px"><button class="rb green zero" style="grid-column:1;grid-row:1/span 3" data-act="rbet" data-type="num" data-v="0">0</button>${nums}${cols}</div>
+        <div class="board-doz">${[1, 2, 3].map((v) => `<button class="rb outer" data-act="rbet" data-type="dozen" data-v="${v}">${v * 12 - 11}–${v * 12}</button>`).join('')}</div>
+        <div class="board-out">
+          <button class="rb outer" data-act="rbet" data-type="low">1–18</button>
+          <button class="rb outer" data-act="rbet" data-type="even">Чёт</button>
+          <button class="rb outer" data-act="rbet" data-type="odd">Нечет</button>
+          <button class="rb outer" data-act="rbet" data-type="high">19–36</button>
+        </div>
+        <div class="rules" style="margin-top:10px">Число — ×36, дюжина/колонка — ×3, чёт/нечет/половина — ×2.</div>
+        <h3 style="margin:12px 0 6px">Другие ставки за столом</h3><div class="bets-table" id="rBets"></div>
+      </details>
+    </div>`;
 
   $('#tab-plane').innerHTML = `
     <div class="grid2">
@@ -217,7 +228,6 @@ function buildUI() {
 
   setTab(S.tab);
   applyModes();
-  renderChips();
   requestAnimationFrame(frame);
 }
 
@@ -310,9 +320,20 @@ const ACT = {
     if (r) { finishTowersSolo(r); renderTowersSolo(); }
   },
 
-  chip(b) { S.chip = Number(b.dataset.v); $('#rChipCustom').value = ''; renderChips(); },
+  ramt(b) {
+    const inp = $('#rAmount');
+    let v = Number(inp.value) || 0;
+    const op = b.dataset.op;
+    if (op === 'add') v += Number(b.dataset.v);
+    if (op === 'half') v = Math.max(1, Math.floor(v / 2));
+    if (op === 'dbl') v = Math.min(Math.floor(S.me.balance), v * 2 || 1);
+    if (op === 'max') v = Math.floor(S.me.balance);
+    if (op === 'clear') v = 0;
+    inp.value = v || '';
+  },
   rbet(b) {
-    const amount = Number($('#rChipCustom').value) || S.chip;
+    const amount = Number($('#rAmount').value);
+    if (!(amount >= 1)) { toast('Введи сумму ставки', 'bad'); $('#rAmount').focus(); return; }
     emit('roulette:bet', { type: b.dataset.type, value: b.dataset.v !== undefined ? Number(b.dataset.v) : null, amount });
   },
   rclear() { emit('roulette:clear'); },
@@ -380,7 +401,7 @@ socket.on('feed', (f) => {
   $('#feed').insertAdjacentHTML('afterbegin', feedItem(f));
   while ($('#feed').children.length > 40) $('#feed').lastChild.remove();
 });
-function chatLine(m) { return `<div class="m"><b>${esc(m.name)}:</b> ${esc(m.text)}</div>`; }
+function chatLine(m) { return `<div class="m">${nick(m.name)}: ${esc(m.text)}</div>`; }
 function renderChat(list) { const c = $('#chat'); c.innerHTML = list.map(chatLine).join(''); c.scrollTop = c.scrollHeight; }
 socket.on('chat', (m) => {
   const c = $('#chat'); c.insertAdjacentHTML('beforeend', chatLine(m)); c.scrollTop = c.scrollHeight;
@@ -429,11 +450,11 @@ function renderLobby(game) {
     let act = '', who;
     const [a, b] = d.players;
     if (d.status === 'open') {
-      who = `<b>${esc(a)}</b> <span class="muted">ждёт соперника</span>`;
+      who = `${nick(a)} <span class="muted">ждёт соперника</span>`;
       act = d.creator === me() ? `<button class="btn small red" data-act="cancel" data-id="${d.id}">Отменить</button>`
         : `<button class="btn small green" data-act="join" data-game="${game}" data-id="${d.id}">Принять вызов</button>`;
     } else {
-      who = `<b>${esc(a)}</b> vs <b>${esc(b)}</b>`;
+      who = `${nick(a)} vs ${nick(b)}`;
       if (d.status === 'done') who += d.result.winner ? ` — 🏆 ${esc(d.result.winner)}` : ' — 🤝 ничья';
       else who += ' <span class="muted">— идёт игра</span>';
       act = `<button class="btn small" data-act="watch" data-game="${game}" data-id="${d.id}">${d.players.includes(me()) && d.status !== 'done' ? 'Открыть' : 'Смотреть'}</button>`;
@@ -446,7 +467,7 @@ function vsHTML(d, info) {
     if (!n) return '<div class="pcard"><div class="pn">???</div><div class="pv">⏳</div><div class="ps">ждём соперника…</div></div>';
     const i = info(n);
     const w = d.result && d.result.winner === n;
-    return `<div class="pcard ${n === me() ? 'me' : ''} ${w ? 'winner' : ''}"><div class="pn">${w ? '👑 ' : ''}${esc(n)}${n === me() ? ' (ты)' : ''}</div><div class="pv">${i.value}</div><div class="ps">${i.sub}</div></div>`;
+    return `<div class="pcard ${n === me() ? 'me' : ''} ${w ? 'winner' : ''}"><div class="pn">${w ? '👑 ' : ''}${nick(n)}${n === me() ? ' (ты)' : ''}</div><div class="pv">${i.value}</div><div class="ps">${i.sub}</div></div>`;
   };
   return `<div class="vs">${card(d.players[0])}<div class="vs-mid">VS</div>${card(d.players[1])}</div>`;
 }
@@ -761,10 +782,6 @@ function renderTowersSolo() {
 document.addEventListener('input', (e) => { if (e.target.id === 'tBet' && !S.towersSolo) renderTowersSolo(); });
 
 // ───────────────────────── рулетка ─────────────────────────
-function renderChips() {
-  document.querySelectorAll('#rChips .chip').forEach((c) => c.classList.toggle('on', Number(c.dataset.v) === S.chip && !$('#rChipCustom').value));
-}
-document.addEventListener('input', (e) => { if (e.target.id === 'rChipCustom') renderChips(); });
 socket.on('roulette', (r) => { sync(r.serverNow); S.roul = r; renderRoulette(); });
 function buildRoulStrip() {
   const st = $('#rStrip');
@@ -810,12 +827,27 @@ function renderRoulette(force) {
       badge.textContent = sums[k] >= 1000 ? r2(sums[k] / 1000) + 'к' : sums[k];
     } else if (badge) badge.remove();
     b.disabled = r.phase !== 'betting';
-    b.classList.toggle('won', r.phase === 'result' && b.dataset.type === 'num' && Number(b.dataset.v) === r.result);
+    b.classList.toggle('won', r.phase === 'result' && ((b.dataset.type === 'num' && Number(b.dataset.v) === r.result) || b.dataset.type === colorOf(r.result)));
   });
   $('#rMine').textContent = rub(mineBets.reduce((s, b) => s + b.amount, 0));
   const bt = { red: '🔴 Красное', black: '⚫ Чёрное', even: 'Чёт', odd: 'Нечет', low: '1–18', high: '19–36' };
   const label = (b) => (b.type === 'num' ? `Число ${b.value}` : b.type === 'dozen' ? `Дюжина ${b.value}` : b.type === 'column' ? `Колонка ${b.value}` : bt[b.type]);
-  $('#rBets').innerHTML = r.bets.length ? r.bets.slice().reverse().map((b) => `<div><span><b>${esc(b.name)}</b> → ${label(b)}</span><span>${rub(b.amount)}</span></div>`).join('') : '<div class="muted">Ставок пока нет</div>';
+  // колонки игроков под большими кнопками
+  const colOf = (b) => (b.type === 'red' ? 'red' : b.type === 'black' ? 'black' : b.type === 'num' && b.value === 0 ? 'green' : null);
+  for (const c of ['red', 'green', 'black']) {
+    const by = {};
+    for (const b of r.bets) if (colOf(b) === c) by[b.name] = (by[b.name] || 0) + b.amount;
+    const rows = Object.entries(by).sort((x, y) => y[1] - x[1]);
+    const won = r.phase === 'result' && colorOf(r.result) === c;
+    $('#rcnt-' + c).textContent = `${rows.length} ${rows.length === 1 ? 'игрок' : rows.length >= 2 && rows.length <= 4 ? 'игрока' : 'игроков'}`;
+    $('#rsum-' + c).textContent = rub(rows.reduce((s, [, v]) => s + v, 0));
+    $('#rlist-' + c).innerHTML = rows.map(([n, v]) => `<div class="${n === me() ? 'mine' : ''}"><span>${nick(n)}</span><b class="${won ? 'win-t' : ''}">${won ? '+' + rub(v * (c === 'green' ? 36 : 2)) : rub(v)}</b></div>`).join('') || '<div class="muted small">пока никто</div>';
+    const col = $('#rcol-' + c);
+    col.classList.toggle('win', won);
+    col.classList.toggle('lose', r.phase === 'result' && !won);
+  }
+  const other = r.bets.filter((b) => !colOf(b));
+  $('#rBets').innerHTML = other.length ? other.slice().reverse().map((b) => `<div><span>${nick(b.name)} → ${label(b)}</span><span>${rub(b.amount)}</span></div>`).join('') : '<div class="muted">Пока нет</div>';
   $('#rHist').innerHTML = r.history.slice(0, 14).map((n) => `<span class="rb ${colorOf(n)}">${n}</span>`).join('');
   const myWin = r.wins[me()];
   $('#rMyWin').innerHTML = r.phase === 'result' && mineBets.length ? (myWin ? `<b class="win-t">+${rub(myWin)}</b>` : '<b class="lose-t">мимо</b>') : '';
@@ -846,7 +878,7 @@ function renderPlane() {
   const p = S.plane;
   if (!p || !$('#pBets')) return;
   $('#pHist').innerHTML = p.history.map((m) => `<span class="${histCls(m)}">×${m.toFixed(2)}</span>`).join('');
-  $('#pBets').innerHTML = p.bets.length ? p.bets.map((b) => `<div><span><b>${esc(b.name)}</b> ${rub(b.amount)}${b.auto ? ` <span class="muted">авто ×${b.auto}</span>` : ''}</span>
+  $('#pBets').innerHTML = p.bets.length ? p.bets.map((b) => `<div><span>${nick(b.name)} ${rub(b.amount)}${b.auto ? ` <span class="muted">авто ×${b.auto}</span>` : ''}</span>
     <span class="${b.cashedAt ? 'ok' : ''}">${b.cashedAt ? `×${b.cashedAt.toFixed(2)} · +${rub(b.win)}` : p.phase === 'crashed' ? '💥' : '…'}</span></div>`).join('') : '<div class="muted">Пока никто не поставил</div>';
 }
 function setBtn(btn, act, cls, text, disabled) {
