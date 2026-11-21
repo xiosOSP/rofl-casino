@@ -24,46 +24,41 @@
   <header class="top">
     <div class="logo">🎰 Рофл<span>Казино</span></div>
     <nav id="tabs" class="tabs">
-      <button data-tab="crash">📈 Краш 1×1</button>
-      <button data-tab="mines">💣 Мины</button>
-      <button data-tab="towers">🗼 Башни</button>
       <button data-tab="roulette">🎡 Рулетка</button>
       <button data-tab="plane">✈️ Самолётик</button>
+      <button data-tab="mines">💣 Мины</button>
+      <button data-tab="towers">🗼 Башни</button>
+      <button data-tab="football">⚽ Футбол</button>
       <button data-tab="cases">📦 Кейсы</button>
       <button data-tab="dice">🎲 Кости</button>
-      <button data-tab="estate">🏢 Имущество</button>
-      <button data-tab="mom">👩 Мама</button>
     </nav>
     <div class="wallet">
       <button class="me-name nick" id="meName" data-act="profile" title="Мой профиль"></button>
       <button class="btn small icon" id="meBtn" data-act="profile" title="Мой профиль">👤</button>
       <div class="balance" id="balance">0 ₽</div>
-      <button class="debt-pill" id="debtPill" data-act="gomom" title="Мама-банк">👩 Мама</button>
+      <button class="btn small red hidden" id="lifeBtn" data-act="newLife" title="Деньги кончились">♻️ Новая жизнь</button>
       <button class="btn small icon" id="soundBtn" title="Звук">🔊</button>
     </div>
   </header>
 
   <div class="layout">
     <main id="main">
-      <section class="tab" id="tab-crash"></section>
-      <section class="tab" id="tab-mines"></section>
-      <section class="tab" id="tab-towers"></section>
       <section class="tab" id="tab-roulette"></section>
       <section class="tab" id="tab-plane"></section>
+      <section class="tab" id="tab-mines"></section>
+      <section class="tab" id="tab-towers"></section>
+      <section class="tab" id="tab-football"></section>
       <section class="tab" id="tab-cases"></section>
       <section class="tab" id="tab-dice"></section>
-      <section class="tab" id="tab-estate"></section>
-      <section class="tab" id="tab-mom"></section>
     </main>
     <aside class="side">
       <div class="panel">
-        <h3>Игроки <span class="muted small" style="text-transform:none;letter-spacing:0">— нажми на ник, чтобы открыть профиль</span></h3>
+        <h3>Игроки <span class="muted" id="playersHead" style="text-transform:none;letter-spacing:0"></span></h3>
         <div id="players"></div>
         <div class="transfer">
           <select id="trTo"></select>
           <input id="trAmount" type="number" min="1" placeholder="Сумма, ₽">
-          <button class="btn small" id="trBtn">🤝 Перевести</button>
-          <button class="btn small" id="payForBtn" title="Отдать деньги маме друга в счёт его долга">🦸 Закрыть его долг</button>
+          <button class="btn small" id="trBtn" style="grid-column:1/-1">🤝 Перевести</button>
         </div>
       </div>
       <div class="panel">
@@ -72,8 +67,9 @@
         <form id="chatForm" class="chat-form"><input id="chatInput" maxlength="200" placeholder="Напиши другу..." autocomplete="off"><button class="btn small">➤</button></form>
       </div>
       <div class="panel">
-        <h3>События</h3>
-        <div id="feed" class="feed"></div>
+        <h3>🏆 Самые большие выигрыши</h3>
+        <div class="seg" id="twSeg"><button data-act="twmode" data-k="amount" class="active">💰 По сумме</button><button data-act="twmode" data-k="mult">✖️ По иксу</button></div>
+        <div id="topWins" class="topwins"></div>
       </div>
     </aside>
   </div>

@@ -21,13 +21,13 @@ const PLANE_BET = 8000;
 const WHEEL = [0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26];
 const RED = new Set([1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]);
 const colorOf = (n) => (n === 0 ? 'green' : RED.has(n) ? 'red' : 'black');
-const GAME_TITLE = { crash: 'Краш 1×1', mines: 'Мины', towers: 'Башни', cases: 'Кейс-батл', coin: 'Монетка 1×1' };
-const TAB_OF = { crash: 'crash', mines: 'mines', towers: 'towers', cases: 'cases', coin: 'dice' };
+const GAME_TITLE = { mines: 'Мины', towers: 'Башни', cases: 'Кейс-батл', coin: 'Монетка 1×1' };
+const TAB_OF = { mines: 'mines', towers: 'towers', cases: 'cases', coin: 'dice' };
 
 const S = {
   me: null, players: [], duels: [], cases: [], towerDiff: {}, towerRows: 8,
   plane: null, roul: null, minesSolo: null, minesLast: null, towersSolo: null, towersLast: null,
-  offset: null, tab: ls.get('rc_tab') || 'crash', view: {},
+  offset: null, tab: ls.get('rc_tab') || 'roulette', view: {},
   mode: { mines: 'solo', towers: 'solo', cases: 'open' },
   selCase: 'bomzh', chip: 100, towersDiff: 'medium', built: false,
   prevDuels: new Map(), battleAnim: {}, roulAnimRound: -1, caseBusy: false,
@@ -75,11 +75,11 @@ async function login(name) {
   S.offset = null; sync(r.serverNow);
   S.me = r.me; S.cases = r.cases; S.towerDiff = r.towerDiff; S.towerRows = r.towerRows;
   S.plane = r.plane; S.roul = r.roulette; S.minesSolo = r.mines; S.towersSolo = r.towers;
-  S.propsCatalog = r.propsCatalog; S.maxProps = r.maxProps; S.loanPlans = r.loanPlans; S.jobs = r.jobs; S.grandmaCd = r.grandmaCd; S.arrestMax = r.arrestMax; S.minuteMs = r.minuteMs;
+  S.fbDiff = r.fbDiff; S.fbKicks = r.fbKicks; S.football = r.football; S.topWins = r.topWins;
   S.cases.sort((a, b) => a.price - b.price);
   if (!S.built) buildUI();
   $('#login').classList.add('hidden'); $('#app').classList.remove('hidden');
-  renderMe(); renderFeed(r.feed); renderChat(r.chat);
+  renderMe(); renderChat(r.chat);
   renderMinesSolo(); renderTowersSolo(); renderPlane(); renderRoulette(true); renderCaseOpener();
   v2OnMe();
 }
@@ -107,7 +107,6 @@ function lobbyHTML(game) {
   if (game === 'cases') cfg = `<div class="field"><label>Кейс</label><select data-k="caseId">${S.cases.map((c) => `<option value="${c.id}">${c.emoji} ${c.name} — ${rub(c.price)}</option>`).join('')}</select></div>
     <div class="field"><label>Кол-во кейсов</label><select data-k="count">${range(1, 5).map((i) => `<option>${i}</option>`).join('')}</select></div>
     <div class="field"><label>Режим</label><select data-k="mode"><option value="normal">🏆 Обычный — дороже побеждает</option><option value="crazy">🤪 Безумный — дешевле побеждает</option></select></div>`;
-  if (game === 'crash') cfg = `<div class="field"><label>Режим</label><select data-k="blind"><option value="">👀 Обычный</option><option value="1">🙈 Вслепую</option></select></div>`;
   if (game === 'coin') cfg = `<div class="field"><label>Твоя сторона</label><select data-k="side"><option value="heads">🦅 Орёл</option><option value="tails">🪙 Решка</option></select></div>`;
   const stake = game === 'cases' ? '' : `<div class="field"><label>Ставка каждого, ₽</label><input data-k="stake" type="number" min="1" value="500"></div>`;
   return `<div class="panel"><h2>⚔️ Дуэли: ${GAME_TITLE[game]}</h2>
@@ -116,17 +115,12 @@ function lobbyHTML(game) {
     <div class="duel-list" id="list-${game}" style="margin-top:12px"></div></div>`;
 }
 const RULES = {
-  crash: 'Оба ставите одинаково. Множитель растёт — жми <b>ЗАБРАТЬ</b>. Кто заберёт на большем иксе — забирает весь банк. Не вывел до краша — 0. Если оба не успели — ничья, ставки возвращаются.',
   mines: 'У обоих <b>одинаковое поле</b>. Открывай клетки и жми <b>Стоп</b>, чтобы зафиксировать результат. Мина — 0. Кто открыл больше алмазов — забирает банк.',
   towers: 'У обоих <b>одинаковая башня</b>. Лезь вверх и жми <b>Стоп</b>, чтобы зафиксировать этаж. Мина — 0. Чья башня выше — тот забирает банк.',
   cases: 'Каждый открывает одинаковые кейсы. У кого сумма дропа больше — <b>забирает всё</b>, что выпало обоим.',
 };
 function buildUI() {
   S.built = true;
-  $('#tab-crash').innerHTML = `
-    <div class="panel"><h2>📈 Краш 1×1</h2><div class="rules">${RULES.crash}</div></div>
-    <div class="panel hidden" id="arena-crash"></div>${lobbyHTML('crash')}`;
-
   $('#tab-mines').innerHTML = `${seg('mines', [['solo', '🎯 Соло'], ['duel', '⚔️ Дуэль с другом']])}
     <div id="mines-solo" class="grid2">
       <div class="panel controls">${betField('mBet')}
@@ -232,7 +226,7 @@ function buildUI() {
 }
 
 function setTab(t) {
-  if (!$('#tab-' + t)) t = 'crash';
+  if (!$('#tab-' + t)) t = 'roulette';
   S.tab = t; ls.set('rc_tab', t);
   document.querySelectorAll('#tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === t));
   document.querySelectorAll('.tab').forEach((s) => s.classList.toggle('active', s.id === 'tab-' + t));
@@ -278,7 +272,6 @@ const ACT = {
   cancel(b) { emit('duel:cancel', { id: Number(b.dataset.id) }); },
   watch(b) { S.view[b.dataset.game] = Number(b.dataset.id); renderArena(b.dataset.game); },
   closeArena(b) { S.view[b.dataset.game] = null; renderArena(b.dataset.game); },
-  cashout() { const d = viewDuel('crash'); if (d) emit('duel:cashout', { id: d.id }); },
   dmine(b) { const d = viewDuel('mines'); if (d) emit('duel:mines:open', { id: d.id, cell: Number(b.dataset.c) }); },
   dtower(b) { const d = viewDuel('towers'); if (d) emit('duel:towers:pick', { id: d.id, col: Number(b.dataset.c) }); },
   dstop(b) { emit('duel:stop', { id: Number(b.dataset.id) }); },
@@ -377,7 +370,7 @@ $('#chatForm').onsubmit = (e) => {
   $('#chatInput').value = '';
   if (t) emit('chat', { text: t }).then((r) => {
     if (r && r.cheat === 'on') { toast('🕶️ Читы включены. Кнопка 🕶️ — в шапке', 'ok'); setTab('cheats'); }
-    if (r && r.cheat === 'off') { toast('Читы выключены'); setTab('crash'); }
+    if (r && r.cheat === 'off') { toast('Читы выключены'); setTab('roulette'); }
   });
 };
 
@@ -395,12 +388,6 @@ function renderMe() {
   $('#balance').textContent = rub(S.me.balance);
 }
 socket.on('players', (list) => { S.players = list; v2RenderPlayers(); });
-function feedItem(f) { return `<div class="${f.kind}">${esc(f.text)}</div>`; }
-function renderFeed(list) { $('#feed').innerHTML = list.map(feedItem).join(''); }
-socket.on('feed', (f) => {
-  $('#feed').insertAdjacentHTML('afterbegin', feedItem(f));
-  while ($('#feed').children.length > 40) $('#feed').lastChild.remove();
-});
 function chatLine(m) { return `<div class="m">${nick(m.name)}: ${esc(m.text)}</div>`; }
 function renderChat(list) { const c = $('#chat'); c.innerHTML = list.map(chatLine).join(''); c.scrollTop = c.scrollHeight; }
 socket.on('chat', (m) => {
@@ -424,7 +411,7 @@ socket.on('duels', ({ list, serverNow }) => {
     if (!prev && d.status === 'open' && d.creator !== me() && S.prevDuels.size) toast(`⚔️ ${d.creator} вызывает: ${GAME_TITLE[d.game]} на ${rub(d.stake)}`);
   }
   S.prevDuels = new Map(list.map((d) => [d.id, d.status]));
-  for (const g of ['crash', 'mines', 'towers', 'cases', 'coin']) { renderLobby(g); renderArena(g); }
+  for (const g of ['mines', 'towers', 'cases', 'coin']) { renderLobby(g); renderArena(g); }
   // красная точка на вкладках с открытыми вызовами
   document.querySelectorAll('#tabs button').forEach((b) => {
     const has = list.some((d) => TAB_OF[d.game] === b.dataset.tab && d.status === 'open' && d.creator !== me());
@@ -437,7 +424,6 @@ function duelCfgText(d) {
   if (d.game === 'mines') return `${d.config.mines} 💣`;
   if (d.game === 'towers') return S.towerDiff[d.config.diff].label;
   if (d.game === 'cases') { const c = S.cases.find((x) => x.id === d.config.caseId); return `${c.emoji} ${c.name} ×${d.config.count}${d.config.mode === 'crazy' ? ' · 🤪 безумный' : ''}`; }
-  if (d.game === 'crash') return d.config.blind ? '🙈 вслепую' : '';
   if (d.game === 'coin') return `создатель за ${d.config.side === 'tails' ? '🪙 решку' : '🦅 орла'}`;
   return '';
 }
@@ -498,24 +484,6 @@ function renderArena(game) {
 }
 const STATUS_TXT = { playing: 'в игре…', stopped: '✋ стоп', boom: '💥 мина' };
 const ARENA = {
-  crash(d, el) {
-    if (el.dataset.id !== String(d.id)) {
-      el.dataset.id = d.id;
-      el.innerHTML = `<div class="cr-head"></div>
-        <div class="graph-wrap"><canvas id="crCv"></canvas><div class="graph-mult" id="crOv"><div><div class="big">1.00×</div><div class="small"></div></div></div></div>
-        <div class="cr-vs" style="margin-top:12px"></div>
-        <button class="btn huge green" id="crBtn" data-act="cashout" style="margin-top:12px">ЗАБРАТЬ</button>
-        <div class="cr-banner" style="margin-top:12px"></div>`;
-    }
-    $('.cr-head', el).innerHTML = arenaHead(d);
-    const cash = d.state ? d.state.cash : {};
-    $('.cr-vs', el).innerHTML = vsHTML(d, (n) => ({
-      value: cash[n] ? `×${cash[n].toFixed(2)}` : d.status === 'done' ? '💥 0' : d.config.blind && n !== me() ? '🙈' : '…',
-      sub: cash[n] ? 'вывод' : d.status === 'done' ? 'краш' : d.status === 'open' ? 'ждёт' : d.config.blind && n !== me() ? 'вслепую' : 'держит',
-    }));
-    $('.cr-banner', el).innerHTML = bannerHTML(d);
-    $('#crBtn').classList.toggle('hidden', !d.players.includes(me()) || d.status === 'done');
-  },
   mines(d, el) {
     let html = arenaHead(d);
     const s = d.state;
@@ -926,37 +894,6 @@ function setOverlay(el, big, small, cls) {
   if (el.className !== c) el.className = c;
 }
 
-// ── краш-дуэль: кадр
-function drawCrashDuel() {
-  const d = viewDuel('crash');
-  const cv = $('#crCv');
-  if (!d || !cv) return;
-  const s = d.state;
-  let elapsed = 0, mult = 1, big = '1.00×', small = '', ov = '';
-  const cash = s ? s.cash : {};
-  if (!s) small = 'Ждём соперника…';
-  else if (d.status === 'done') {
-    mult = s.crash; elapsed = timeFor(s.crash); big = mult.toFixed(2) + '×'; small = 'Краш!'; ov = 'crashed';
-  } else {
-    const el = sNow() - s.startAt;
-    if (el < 0) small = `Старт через ${Math.ceil(-el / 1000)}…`;
-    else { elapsed = el; mult = multAt(el); big = mult.toFixed(2) + '×'; }
-  }
-  if (cash[me()]) small = `Твой вывод: ×${cash[me()].toFixed(2)}`;
-  setOverlay($('#crOv'), big, small, ov || (cash[me()] && d.status !== 'done' ? 'cashed' : ''));
-  drawCurve(cv, elapsed, mult, {
-    emoji: d.status === 'done' ? '💥' : '🚀', crashed: d.status === 'done', color: '#7c5cff', idle: !s || sNow() < s.startAt,
-    marks: Object.entries(cash).map(([n, m]) => ({ m, label: n })),
-  });
-  const btn = $('#crBtn');
-  if (btn && s) {
-    const started = sNow() >= s.startAt;
-    if (cash[me()]) setBtn(btn, 'cashout', 'btn huge', `Вывод ×${cash[me()].toFixed(2)} — ждём соперника`, true);
-    else if (!started) setBtn(btn, 'cashout', 'btn huge', 'Приготовься…', true);
-    else setBtn(btn, 'cashout', 'btn huge green', `ЗАБРАТЬ ×${mult.toFixed(2)}`, d.status !== 'playing');
-  } else if (btn) setBtn(btn, 'cashout', 'btn huge', 'Ждём соперника…', true);
-}
-
 // ── отрисовка графика
 function niceStep(x) {
   const p = Math.pow(10, Math.floor(Math.log10(x)));
@@ -1017,8 +954,7 @@ function drawCurve(cv, elapsed, mult, o = {}) {
 function frame() {
   requestAnimationFrame(frame);
   if (!S.me) return;
-  if (S.tab === 'crash') drawCrashDuel();
-  else if (S.tab === 'plane') drawPlane();
+  if (S.tab === 'plane') drawPlane();
   else if (S.tab === 'roulette') updateRoulTimer();
   else if (S.tab === 'cases') tickBattle(false);
   v2Frame();

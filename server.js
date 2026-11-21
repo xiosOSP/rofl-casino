@@ -74,86 +74,36 @@ function save() {
   }, 400);
 }
 
-// ───────────────────────── мама-банк: настройки ─────────────────────────
-const TIME_SCALE = Number(process.env.DEBT_TIME_SCALE) > 0 ? Number(process.env.DEBT_TIME_SCALE) : 1;
-const MIN = 60000 * TIME_SCALE; // «минута» долга
-const START_TRUST = 60;
-const MAX_LOANS = 3;
-const ARREST_MAX = 1000;
-const PENALTY_RATE = 0.03;
-const STAGE_MIN = { 1: 0, 2: 3, 3: 10 }; // стадии просрочки (минут после дедлайна)
-const GRANDMA_CD = 30 * 60000;
-const LOAN_PLANS = [
-  { id: 'bread', name: 'На хлебушек', emoji: '🍞', amount: 5000, rate: 0.10, minutes: 10, minTrust: 0 },
-  { id: 'phone', name: 'На телефон', emoji: '📱', amount: 15000, rate: 0.20, minutes: 20, minTrust: 30 },
-  { id: 'talk', name: 'Серьёзный разговор', emoji: '🗣️', amount: 30000, rate: 0.30, minutes: 30, minTrust: 50 },
-  { id: 'flat', name: 'Под залог квартиры', emoji: '🏠', amount: 75000, rate: 0.50, minutes: 45, minTrust: 75 },
-];
-const JOBS = {
-  dishes: { id: 'dishes', name: 'Помыть посуду', emoji: '🍽️', pay: 300, secs: 10, cd: 60 },
-  dog: { id: 'dog', name: 'Выгулять собаку', emoji: '🐕', pay: 800, secs: 30, cd: 180 },
-  shop: { id: 'shop', name: 'Сходить в магазин', emoji: '🛒', pay: 1500, secs: 60, cd: 360 },
-  homework: { id: 'homework', name: 'Сделать уроки брату', emoji: '📚', pay: 3000, secs: 120, cd: 900 },
-};
-const MOM_LINES = {
-  loan: ['Ладно, держи {amount}. Но вернуть {owe} — через {min} мин, поняли друг друга?', 'Это последний раз. Честно последний. Жду {owe} через {min} мин.', 'Только папе не говори. Срок — {min} мин.', 'Я в твои годы уже на заводе работала... Ладно, держи. Вернуть {owe}.', 'Опять казино? Ох... {amount}, и чтобы через {min} мин было {owe}.'],
-  remind: ['⏰ Напоминаю: долг {owe}, осталось совсем чуть-чуть.', '⏰ Ты же помнишь про {owe}? Я вот помню.', '⏰ Скоро срок. Не заставляй меня звонить.'],
-  stage1: ['📞 Пропущенный вызов: Мама (3)', '📞 Почему не берёшь трубку?! Срок вышел!', '📞 Я жду. Пеня капает, между прочим, 3% в минуту.', '📞 Я тебе вообще-то мать, а не банк. Где деньги?'],
-  stage2: ['😡 Всё. Теперь половина твоих выигрышей — моя, пока не вернёшь.', '😡 Карту твою я заблокировала. Буду забирать половину выигрыша.', '😡 Я позвонила тёте Свете. Она тоже в шоке. Конфискую выигрыши.'],
-  stage3: ['🔒 Домашний арест! Ставки не больше 1 000 ₽, пока не вернёшь долг.', '🔒 Папа уже в курсе. Сидишь дома, играешь по мелочи.', '🔒 Wi-Fi отключать не буду, но ставки — максимум 1 000 ₽.'],
-  extend: ['Ладно, ещё немного подожду. Но +10%!', 'Отсрочка. Последняя. Честно-честно последняя.', 'Хорошо, но я это запомню.'],
-  paidOk: ['🥰 Молодец! Вот видишь, можешь же.', '🥰 Спасибо, солнышко. Доверие растёт.', '🥰 Вовремя! Может, ещё и посуду помоешь?'],
-  paidLate: ['Ну наконец-то. Но я это запомню.', 'Деньги вернулись... но осадочек остался.', 'Хорошо, что вернул(а). Плохо, что так поздно.'],
-  refuse: ['Хватит с тебя. Сначала верни старое.'],
-  job: ['Спасибо за помощь! Держи {pay}.', 'Вот это я понимаю — полезный ребёнок. +{pay}.'],
-  helped: ['Передай другу спасибо, он(а) закрыл(а) {amount} твоего долга.'],
-  newLife: ['Ладно. Начнём с чистого листа. Но я всё помню.', 'Новая жизнь? Хорошо. Только в казино больше ни-ни... ну ты понял(а).', 'Долги прощаю. Один раз. Ну, может, два.', 'Ох... Ладно, держи 10 000 ₽ и начинай заново.'],
-};
-
 // ───────────────────────── игроки ─────────────────────────
+// Мама-банк и имущество убраны. Старое имущество продаётся за 70% (+ касса), долги маме списываются.
+const OLD_PROP_PRICES = { room: 25000, studio: 80000, center: 200000, penthouse: 1000000, villa: 5000000, shawarma: 50000, wash: 150000, club: 400000, bar: 1200000, casino: 4000000 };
 function withDefaults(u) {
-  u.balance ??= START_BALANCE; u.wagered ??= 0; u.best ??= 0; u.lives ??= 1;
-  u.trust ??= START_TRUST; u.loans ??= []; u.loanSeq ??= 1;
-  u.mom ??= []; u.history ??= []; u.jobCd ??= {}; u.job ??= null; u.grandmaAt ??= 0;
-  u.admin ??= false; u.cheats ??= {};
-  u.stats ??= {};
-  for (const k of ['borrowed', 'repaid', 'penalties', 'overdue', 'onTime', 'late', 'jobs', 'jobsEarned', 'grandma', 'confiscated', 'helped', 'propIncome', 'propSpent']) u.stats[k] ??= 0;
-  u.props ??= []; u.propSeq ??= 1;
-  u.stats.games ??= {};
-  delete u.refills;
+  u.balance ??= START_BALANCE; u.wagered ??= 0; u.best ??= 0; u.lives ??= 1; u.bigWin ??= 0;
+  u.history ??= []; u.admin ??= false; u.cheats ??= {};
+  u.stats ??= {}; u.stats.games ??= {};
+  if (Array.isArray(u.props) && u.props.length) {
+    u.balance = r2(u.balance + u.props.reduce((t, p) => t + ((OLD_PROP_PRICES[p.type] || 0) + (p.spent || 0)) * 0.7 + (p.cash || 0), 0));
+  }
+  for (const k of ['props', 'propSeq', 'loans', 'loanSeq', 'trust', 'mom', 'jobCd', 'job', 'grandmaAt', 'refills']) delete u[k];
+  for (const k of ['borrowed', 'repaid', 'penalties', 'overdue', 'onTime', 'late', 'jobs', 'jobsEarned', 'grandma', 'confiscated', 'helped', 'propIncome', 'propSpent']) delete u.stats[k];
+  delete u.cheats.propBoost;
   return u;
 }
 for (const u of Object.values(db.users)) withDefaults(u);
+db.topWins ??= { amount: [], mult: [] };
+save();
 
 const online = new Map(); // name -> кол-во подключений
-const activeLoans = (u) => u.loans.filter((l) => l.status === 'active');
-const debtOf = (u) => r2(activeLoans(u).reduce((s, l) => s + l.owed, 0));
-const creditLimit = (u) => 10000 + Math.round(u.trust) * 1000;
-const clampTrust = (x) => Math.max(0, Math.min(100, Math.round(x)));
-function loanStage(l, t = now()) {
-  if (l.status !== 'active' || t < l.dueAt) return 0;
-  const m = (t - l.dueAt) / MIN;
-  return m >= STAGE_MIN[3] ? 3 : m >= STAGE_MIN[2] ? 2 : 1;
-}
 // чит включён у игрока? (только у админа)
 const cheatOn = (name, k) => { const u = db.users[name]; return !!(u && u.admin && u.cheats[k]); };
 function cheatInfo(name, data) { io.to('u:' + name).emit('cheatInfo', data); }
-const momStage = (u) => activeLoans(u).reduce((s, l) => Math.max(s, loanStage(l)), 0);
-const publicUser = (u) => {
-  const debt = debtOf(u);
-  return {
-    name: u.name, balance: u.balance, debt, assets: assetsOf(u), props: u.props.length,
-    net: r2(u.balance - debt + assetsOf(u)), trust: u.trust, stage: momStage(u),
-    best: u.best, wagered: u.wagered, lives: u.lives, online: (online.get(u.name) || 0) > 0,
-  };
-};
+const publicUser = (u) => ({
+  name: u.name, balance: u.balance, net: u.balance, best: u.best, bigWin: u.bigWin, wagered: u.wagered,
+  lives: u.lives, online: (online.get(u.name) || 0) > 0,
+});
 const privateUser = (u) => ({
-  ...publicUser(u),
-  limit: creditLimit(u),
-  loans: u.loans, mom: u.mom, history: u.history, stats: u.stats,
-  admin: u.admin, cheats: u.admin ? u.cheats : {},
-  estate: u.props.map((p) => propView(u, p)),
-  job: u.job, jobCd: u.jobCd, grandmaAt: u.grandmaAt, lastLife: u.lastLife || null, serverNow: now(),
+  ...publicUser(u), history: u.history, stats: u.stats,
+  admin: u.admin, cheats: u.admin ? u.cheats : {}, lastLife: u.lastLife || null, serverNow: now(),
 });
 function pushUser(name) {
   const u = db.users[name];
@@ -165,16 +115,25 @@ function broadcastPlayers() {
   if (playersTimer) return;
   playersTimer = setTimeout(() => {
     playersTimer = null;
-    io.emit('players', Object.values(db.users).map(publicUser).sort((a, b) => b.net - a.net));
+    io.emit('players', Object.values(db.users).map(publicUser).sort((a, b) => b.balance - a.balance));
   }, 50);
 }
-function momSay(u, kind, vars = {}, toFeed = false) {
-  const list = MOM_LINES[kind];
-  const text = list[randInt(list.length)].replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? '');
-  const m = { t: now(), text, kind };
-  u.mom.unshift(m); u.mom.length = Math.min(u.mom.length, 40);
-  io.to('u:' + u.name).emit('mom', m);
-  if (toFeed) addFeed(`👩 Мама игрока ${u.name}: «${text}»`, 'mom');
+
+// ───────────────────────── самые большие выигрыши ─────────────────────────
+const TOP_N = 15;
+function recordWin(name, game, stake, payout) {
+  if (!(stake > 0) || !(payout > stake)) return;
+  const w = { name, game, stake, payout, profit: r2(payout - stake), mult: Math.floor((payout / stake) * 100) / 100, t: now() };
+  let changed = false;
+  for (const [list, key] of [[db.topWins.amount, 'profit'], [db.topWins.mult, 'mult']]) {
+    if (list.length < TOP_N || w[key] > list[list.length - 1][key]) {
+      list.push(w); list.sort((a, b) => b[key] - a[key] || a.t - b.t); list.length = Math.min(list.length, TOP_N);
+      changed = true;
+    }
+  }
+  const u = db.users[name];
+  if (u && w.profit > u.bigWin) u.bigWin = w.profit;
+  if (changed) io.emit('topWins', db.topWins);
 }
 
 // ───────────────────────── деньги: ставки и выплаты ─────────────────────────
@@ -182,7 +141,6 @@ const gameStats = (u, game) => (u.stats.games[game] ??= { played: 0, won: 0, wag
 function placeBet(name, amount, game, count = true) {
   const u = db.users[name];
   if (!(amount > 0) || amount > u.balance + 1e-9) throw new Error('Недостаточно средств');
-  if (amount > ARREST_MAX && momStage(u) >= 3) throw new Error(`🔒 Домашний арест: ставка не больше ${rub(ARREST_MAX)}. Верни долг маме!`);
   u.balance = r2(u.balance - amount);
   u.wagered = r2(u.wagered + amount);
   const g = gameStats(u, game);
@@ -199,7 +157,7 @@ function refund(name, amount, game) {
   g.played = Math.max(0, g.played - 1);
   save(); pushUser(name);
 }
-// выплата по завершённой ставке (payout = 0 — проигрыш); тут же конфискация мамой
+// выплата по завершённой ставке (payout = 0 — проигрыш)
 function settle(name, game, stake, payout, mult) {
   const u = db.users[name];
   if (!u) return { kept: 0, taken: 0 };
@@ -207,201 +165,13 @@ function settle(name, game, stake, payout, mult) {
   const g = gameStats(u, game);
   g.returned = r2(g.returned + payout);
   if (payout > stake) g.won++;
-  let taken = 0;
-  const profit = payout - stake;
-  if (profit > 0 && momStage(u) >= 2) {
-    taken = r2(Math.min(profit * 0.5, debtOf(u)));
-    if (taken > 0) {
-      u.stats.confiscated = r2(u.stats.confiscated + taken);
-      repayLoans(u, taken);
-      io.to('u:' + name).emit('confiscated', { amount: taken });
-    }
-  }
-  const kept = r2(payout - taken);
-  u.balance = r2(u.balance + kept);
+  u.balance = r2(u.balance + payout);
   if (mult && mult > 1 && mult > u.best) u.best = r2(mult);
-  u.history.unshift({ t: now(), game, stake, payout, taken });
+  u.history.unshift({ t: now(), game, stake, payout });
   u.history.length = Math.min(u.history.length, 40);
+  recordWin(name, game, stake, payout);
   save(); pushUser(name);
-  return { kept, taken };
-}
-
-// ───────────────────────── долги ─────────────────────────
-function payLoan(u, l, amount) {
-  const pay = r2(Math.min(amount, l.owed));
-  l.owed = r2(l.owed - pay); l.paid = r2(l.paid + pay);
-  u.stats.repaid = r2(u.stats.repaid + pay);
-  if (l.owed < 0.01) closeLoan(u, l);
-  return pay;
-}
-function repayLoans(u, amount) { // самые ранние дедлайны — первыми
-  for (const l of activeLoans(u).sort((a, b) => a.dueAt - b.dueAt)) {
-    if (amount < 0.01) break;
-    amount = r2(amount - payLoan(u, l, amount));
-  }
-}
-function closeLoan(u, l) {
-  l.owed = 0; l.status = 'paid'; l.paidAt = now();
-  if (l.wasOverdue) { u.trust = clampTrust(u.trust + 2); u.stats.late++; momSay(u, 'paidLate', {}, true); }
-  else { u.trust = clampTrust(u.trust + 8); u.stats.onTime++; momSay(u, 'paidOk'); addFeed(`✅ ${u.name} вовремя вернул(а) маме ${rub(l.base)} (${l.emoji} ${l.name})`, 'mom'); }
-  const closed = u.loans.filter((x) => x.status !== 'active');
-  if (closed.length > 15) { const drop = new Set(closed.slice(15)); u.loans = u.loans.filter((x) => !drop.has(x)); }
-}
-// ───────────────────────── имущество ─────────────────────────
-const PROPS = {
-  room: { kind: 'flat', name: 'Комната в общаге', emoji: '🏚️', price: 25000, income: 200 },
-  studio: { kind: 'flat', name: 'Однушка в спальнике', emoji: '🏠', price: 80000, income: 650 },
-  center: { kind: 'flat', name: 'Двушка в центре', emoji: '🏢', price: 200000, income: 1700 },
-  penthouse: { kind: 'flat', name: 'Пентхаус в Сити', emoji: '🌆', price: 1000000, income: 8500 },
-  villa: { kind: 'flat', name: 'Вилла на море', emoji: '🏝️', price: 5000000, income: 45000 },
-  shawarma: { kind: 'biz', name: 'Шаурмичная', emoji: '🌯', price: 50000, income: 550 },
-  wash: { kind: 'biz', name: 'Автомойка', emoji: '🚗', price: 150000, income: 1600 },
-  club: { kind: 'biz', name: 'Компьютерный клуб', emoji: '🎮', price: 400000, income: 4300 },
-  bar: { kind: 'biz', name: 'Бар «У мамы»', emoji: '🍻', price: 1200000, income: 13000 },
-  casino: { kind: 'biz', name: 'Своё казино', emoji: '🎰', price: 4000000, income: 44000 },
-};
-const TENANTS = [
-  { name: 'Студент Вася', emoji: '🧑‍🎓', k: 0.8, risk: 0.12 },
-  { name: 'Семья с котом', emoji: '🐈', k: 1.0, risk: 0.03 },
-  { name: 'Айтишник на удалёнке', emoji: '🧑‍💻', k: 1.25, risk: 0.02 },
-  { name: 'Блогер', emoji: '🤳', k: 1.4, risk: 0.1 },
-  { name: 'Бабушка-одуванчик', emoji: '👵', k: 0.9, risk: 0 },
-  { name: 'Командировочный', emoji: '🧳', k: 1.1, risk: 0.05 },
-  { name: 'Рок-группа', emoji: '🎸', k: 1.5, risk: 0.18 },
-  { name: 'Подозрительный тип', emoji: '🕶️', k: 1.8, risk: 0.3 },
-];
-const MAX_PROPS = 12, CASH_CAP_MIN = 60, OFFERS_CD = 30000, SELL_K = 0.7;
-const maxLevel = (def) => (def.kind === 'flat' ? 3 : 5);
-const levelMult = (def, lvl) => 1 + (def.kind === 'flat' ? 0.25 : 0.5) * (lvl - 1);
-const upgradeCost = (def, lvl) => r2(def.price * (def.kind === 'flat' ? 0.3 : 0.4) * lvl);
-const sellPrice = (p) => r2((PROPS[p.type].price + p.spent) * SELL_K);
-function propRate(owner, p) { // ₽ за «минуту»
-  const def = PROPS[p.type];
-  if (def.kind === 'flat' && p.state !== 'rented') return 0;
-  let r = def.income * levelMult(def, p.level) * (def.kind === 'flat' ? p.tenant.k : 1);
-  if (cheatOn(owner, 'propBoost')) r *= 3;
-  return r2(r);
-}
-const propCap = (owner, p) => r2(Math.max(propRate(owner, p), PROPS[p.type].income * levelMult(PROPS[p.type], p.level)) * CASH_CAP_MIN);
-function accrue(owner, p, t = now()) {
-  const rate = propRate(owner, p);
-  if (rate > 0 && t > p.lastTick) p.cash = r2(Math.min(propCap(owner, p), p.cash + (rate * (t - p.lastTick)) / MIN));
-  p.lastTick = Math.max(p.lastTick, t);
-}
-const assetsOf = (u) => r2(u.props.reduce((s, p) => s + sellPrice(p), 0));
-function propView(u, p) {
-  const def = PROPS[p.type];
-  return {
-    id: p.id, type: p.type, level: p.level, state: p.state, tenant: p.tenant, rentUntil: p.rentUntil,
-    offers: p.offers, offersAt: p.offersAt, cash: p.cash, lastTick: p.lastTick,
-    rate: propRate(u.name, p), cap: propCap(u.name, p), sell: sellPrice(p),
-    upgrade: p.level < maxLevel(def) ? upgradeCost(def, p.level) : null, maxLevel: maxLevel(def),
-  };
-}
-function genOffers(def) {
-  return pickDistinct(TENANTS.length, 3).map((i) => ({ ...TENANTS[i], mins: 15 + randInt(26) }));
-}
-function propEvent(u, text, toFeed = false) {
-  io.to('u:' + u.name).emit('propEvent', { text });
-  if (toFeed) addFeed(text, 'mom');
-}
-// раз в «минуту» на каждый объект: конец договора, побеги жильцов, события бизнеса
-function propTick(u, t) {
-  let changed = false;
-  for (const p of u.props) {
-    const def = PROPS[p.type];
-    if (def.kind === 'flat' && p.state === 'rented' && t >= p.rentUntil) {
-      accrue(u.name, p, p.rentUntil);
-      propEvent(u, `📦 ${p.tenant.emoji} ${p.tenant.name} съехал(а) из «${def.name}». Пора искать новых жильцов.`);
-      p.state = 'free'; p.tenant = null; p.lastTick = t;
-      changed = true; continue;
-    }
-    if (t < p.nextCheck) continue;
-    p.nextCheck = t + MIN;
-    accrue(u.name, p, t);
-    if (def.kind === 'flat' && p.state === 'rented' && rnd() < p.tenant.risk * 0.15) {
-      const lost = p.cash;
-      propEvent(u, `🏃 ${p.tenant.emoji} ${p.tenant.name} сбежал(а) из «${def.name}» у ${u.name}, не заплатив ${rub(lost)}!`, true);
-      p.cash = 0; p.state = 'free'; p.tenant = null;
-      changed = true;
-    } else if (def.kind === 'biz' && rnd() < 0.03) {
-      const ev = randInt(3);
-      if (ev === 0) {
-        const loss = r2(p.cash * 0.25); p.cash = r2(p.cash - loss);
-        propEvent(u, `🧾 Налоговая проверка в «${def.name}»: −${rub(loss)} из кассы`);
-      } else if (ev === 1) {
-        const loss = r2(Math.min(p.cash, def.price * 0.05)); p.cash = r2(p.cash - loss);
-        propEvent(u, `🔧 Поломка в «${def.name}»: ремонт ${rub(loss)} из кассы`);
-      } else {
-        const bonus = r2(propRate(u.name, p) * 10);
-        p.cash = r2(Math.min(propCap(u.name, p), p.cash + bonus));
-        propEvent(u, `🌟 Ажиотаж в «${def.name}» у ${u.name}: +${rub(bonus)} в кассу`, true);
-      }
-      changed = true;
-    }
-  }
-  return changed;
-}
-function collectProps(u, list) {
-  const t = now();
-  let total = 0;
-  for (const p of list) { accrue(u.name, p, t); total = r2(total + p.cash); p.cash = 0; }
-  if (total <= 0) return { total: 0, taken: 0 };
-  let taken = 0;
-  if (momStage(u) >= 2) {
-    taken = r2(Math.min(total * 0.5, debtOf(u)));
-    if (taken > 0) { u.stats.confiscated = r2(u.stats.confiscated + taken); repayLoans(u, taken); io.to('u:' + u.name).emit('confiscated', { amount: taken }); }
-  }
-  u.balance = r2(u.balance + total - taken);
-  u.stats.propIncome = r2(u.stats.propIncome + total);
-  return { total, taken };
-}
-
-function momTick() {
-  const t = now();
-  for (const u of Object.values(db.users)) {
-    let changed = false;
-    if (u.job && t >= u.job.endsAt) {
-      const J = JOBS[u.job.id];
-      u.job = null;
-      if (J) {
-        u.balance = r2(u.balance + J.pay); u.trust = clampTrust(u.trust + 1);
-        u.stats.jobs++; u.stats.jobsEarned = r2(u.stats.jobsEarned + J.pay);
-        io.to('u:' + u.name).emit('jobDone', { name: J.name, emoji: J.emoji, pay: J.pay });
-        if (randInt(3) === 0) momSay(u, 'job', { pay: rub(J.pay) });
-      }
-      changed = true;
-    }
-    for (const l of activeLoans(u)) {
-      if (!l.reminded && t >= l.dueAt - 2 * MIN && t < l.dueAt) {
-        l.reminded = true; momSay(u, 'remind', { owe: rub(l.owed) }); changed = true;
-      }
-      const st = loanStage(l, t);
-      while ((l.stage || 0) < st) {
-        l.stage = (l.stage || 0) + 1;
-        if (l.stage === 1) { l.wasOverdue = true; u.stats.overdue++; u.trust = clampTrust(u.trust - 10); }
-        else u.trust = clampTrust(u.trust - 5);
-        momSay(u, 'stage' + l.stage, {}, true);
-        changed = true;
-      }
-      if (st >= 1) {
-        const mins = Math.floor((t - l.dueAt) / MIN);
-        if ((l.penMin || 0) < mins) {
-          if (l.penalty >= l.base) l.penMin = mins;
-          while ((l.penMin || 0) < mins) {
-            l.penMin = (l.penMin || 0) + 1;
-            const add = r2(Math.min(l.base - l.penalty, l.owed * PENALTY_RATE));
-            if (add <= 0) { l.penMin = mins; break; }
-            l.owed = r2(l.owed + add); l.penalty = r2(l.penalty + add);
-            u.stats.penalties = r2(u.stats.penalties + add);
-          }
-          changed = true;
-        }
-      }
-    }
-    if (u.props.length && propTick(u, t)) changed = true;
-    if (changed) { save(); pushUser(u.name); }
-  }
+  return { kept: payout, taken: 0 };
 }
 
 // лента событий и чат
@@ -605,6 +375,22 @@ function towersSoloView(name) {
   };
 }
 
+// ───────────────────────── футбол (серия пенальти) ─────────────────────────
+const FB_ZONES = 6, FB_KICKS = 5;
+const FB_DIFF = {
+  easy: { keeper: 1, label: 'Новичок' }, medium: { keeper: 2, label: 'Профи' },
+  hard: { keeper: 3, label: 'Легенда' }, insane: { keeper: 4, label: 'Стена' },
+};
+const fbP = (diff) => (FB_ZONES - FB_DIFF[diff].keeper) / FB_ZONES; // шанс гола
+const fbMult = (diff, n) => (n <= 0 ? 1 : Math.floor((0.97 / Math.pow(fbP(diff), n)) * 100) / 100);
+const football = {}; // name -> {bet, diff, kicks:[{zone, covered}], next:[зоны вратаря на следующий удар]}
+function fbView(name) {
+  const s = football[name];
+  if (!s) return null;
+  const n = s.kicks.length;
+  return { bet: s.bet, diff: s.diff, kicks: s.kicks, goals: n, mult: fbMult(s.diff, n), next: fbMult(s.diff, n + 1), xray: cheatOn(name, 'xray') ? s.next : null };
+}
+
 // ───────────────────────── самолётик (общий раунд) ─────────────────────────
 const PLANE_BET_MS = 8000;
 const PLANE_AFTER_MS = 4000;
@@ -717,8 +503,8 @@ function roulSettle() {
 }
 
 // ───────────────────────── дуэли 1 на 1 ─────────────────────────
-const GAME_NAMES = { crash: 'краш-дуэль', mines: 'мины-дуэль', towers: 'башни-дуэль', cases: 'кейс-батл', coin: 'монетка' };
-const DUEL_KEY = { crash: 'crash', mines: 'mines-duel', towers: 'towers-duel', cases: 'cases-battle', coin: 'coin' };
+const GAME_NAMES = { mines: 'мины-дуэль', towers: 'башни-дуэль', cases: 'кейс-батл', coin: 'монетка' };
+const DUEL_KEY = { mines: 'mines-duel', towers: 'towers-duel', cases: 'cases-battle', coin: 'coin' };
 const COIN_MS = 3200;
 const duels = new Map();
 let duelSeq = 1;
@@ -732,11 +518,7 @@ function duelView(d, viewer) {
   };
   const s = d.state;
   if (!s) return base;
-  if (d.game === 'crash') {
-    let cash = s.cash;
-    if (d.config.blind && !done) cash = viewer in s.cash ? { [viewer]: s.cash[viewer] } : {};
-    base.state = { startAt: s.startAt, cash, crash: done ? s.crash : null, sight: !done && cheatOn(viewer, 'crashSight') ? s.crash : null };
-  } else if (d.game === 'mines') {
+  if (d.game === 'mines') {
     const p = {};
     for (const [n, ps] of Object.entries(s.p)) p[n] = { count: ps.opened.length, status: ps.status, opened: n === viewer || done ? ps.opened : null, hit: ps.hit };
     base.state = { p, field: done ? s.field : null, xray: !done && cheatOn(viewer, 'xray') ? s.field : null };
@@ -803,12 +585,7 @@ function settleDuel(d, scores) {
 function startDuel(d) {
   d.status = 'playing';
   const [a, b] = d.players;
-  if (d.game === 'crash') {
-    const crash = genCrash(1);
-    d.state = { crash, startAt: now() + 4000, cash: {} };
-    d.timer = setTimeout(() => settleDuel(d, { [a]: d.state.cash[a] || 0, [b]: d.state.cash[b] || 0 }),
-      d.state.startAt - now() + timeFor(crash) + 30);
-  } else if (d.game === 'mines') {
+  if (d.game === 'mines') {
     const fresh = () => ({ opened: [], status: 'playing', hit: null });
     d.state = { field: pickDistinct(MINES_CELLS, d.config.mines), p: { [a]: fresh(), [b]: fresh() } };
   } else if (d.game === 'towers') {
@@ -878,12 +655,10 @@ io.on('connection', (socket) => {
     me = name;
     socket.join('u:' + me);
     online.set(me, (online.get(me) || 0) + 1);
-    if (isNew) addFeed(`👋 Новый игрок: ${me} (стартовые ${rub(START_BALANCE)})`);
     broadcastPlayers();
     setTimeout(broadcastDuels, 0);
     return {
-      me: privateUser(u), feed, chat, propsCatalog: PROPS, maxProps: MAX_PROPS, loanPlans: LOAN_PLANS, jobs: JOBS, grandmaCd: GRANDMA_CD,
-      arrestMax: ARREST_MAX, minuteMs: MIN, cases: CASES, towerDiff: TOWER_DIFF, towerRows: TOWER_ROWS,
+      me: privateUser(u), chat, topWins: db.topWins, fbDiff: FB_DIFF, fbZones: FB_ZONES, fbKicks: FB_KICKS, football: fbView(me), cases: CASES, towerDiff: TOWER_DIFF, towerRows: TOWER_ROWS,
       plane: planeView(), roulette: roulView(),
       mines: minesSoloView(me), towers: towersSoloView(me), serverNow: now(),
     };
@@ -917,98 +692,7 @@ io.on('connection', (socket) => {
     io.emit('chat', m);
   });
 
-  // ── мама-банк
   const U = () => db.users[me];
-  const findLoan = (u, id) => {
-    const l = u.loans.find((x) => x.id === Number(id) && x.status === 'active');
-    if (!l) throw new Error('Долг не найден');
-    return l;
-  };
-  on('mom:loan', ({ plan }) => {
-    const P = LOAN_PLANS.find((p) => p.id === plan);
-    if (!P) throw new Error('Нет такого тарифа');
-    const u = U();
-    if (momStage(u) >= 1) { momSay(u, 'refuse'); throw new Error('Мама: «Сначала верни просроченное!»'); }
-    if (activeLoans(u).length >= MAX_LOANS) throw new Error(`Мама: «У тебя и так ${MAX_LOANS} долга!»`);
-    if (u.trust < P.minTrust) throw new Error(`Мама не доверяет тебе такие суммы (нужно доверие ${P.minTrust})`);
-    const owe = r2(P.amount * (1 + P.rate));
-    if (debtOf(u) + owe > creditLimit(u)) throw new Error(`Мама: «Мой лимит для тебя — ${rub(creditLimit(u))} долга»`);
-    const t = now();
-    const l = {
-      id: u.loanSeq++, plan: P.id, name: P.name, emoji: P.emoji, principal: P.amount, rate: P.rate, minutes: P.minutes,
-      base: owe, owed: owe, paid: 0, penalty: 0, takenAt: t, dueAt: t + P.minutes * MIN,
-      status: 'active', stage: 0, extended: false, wasOverdue: false, reminded: false, penMin: 0,
-    };
-    u.loans.unshift(l);
-    u.balance = r2(u.balance + P.amount);
-    u.stats.borrowed = r2(u.stats.borrowed + P.amount);
-    u.trust = clampTrust(u.trust - 2);
-    momSay(u, 'loan', { amount: rub(P.amount), owe: rub(owe), min: P.minutes });
-    addFeed(`💸 ${me} занимает у мамы ${rub(P.amount)} (${P.emoji} ${P.name}) — вернуть ${rub(owe)} за ${P.minutes} мин`, 'refill');
-    save(); pushUser(me);
-  });
-  on('mom:repay', ({ id, amount }) => {
-    const u = U();
-    const l = findLoan(u, id);
-    amount = amount === 'all' ? Math.min(l.owed, u.balance) : Math.min(parseBet(amount), l.owed);
-    amount = r2(amount);
-    if (!(amount > 0)) throw new Error('Нечем платить');
-    if (amount > u.balance + 1e-9) throw new Error('Недостаточно средств');
-    u.balance = r2(u.balance - amount);
-    payLoan(u, l, amount);
-    save(); pushUser(me);
-    return { paid: amount, closed: l.status !== 'active' };
-  });
-  on('mom:extend', ({ id }) => {
-    const u = U();
-    const l = findLoan(u, id);
-    if (l.extended) throw new Error('Отсрочка уже была');
-    if (now() >= l.dueAt) throw new Error('Поздно просить отсрочку — срок уже вышел');
-    const add = r2(l.owed * 0.1);
-    l.extended = true; l.reminded = false;
-    l.dueAt += Math.ceil(l.minutes / 2) * MIN;
-    l.owed = r2(l.owed + add); l.base = r2(l.base + add);
-    u.trust = clampTrust(u.trust - 5);
-    momSay(u, 'extend');
-    save(); pushUser(me);
-  });
-  on('mom:payFor', ({ to, amount }) => {
-    const f = db.users[to];
-    if (!f || to === me) throw new Error('За кого платим?');
-    const debt = debtOf(f);
-    if (!(debt > 0)) throw new Error(`У ${to} нет долгов`);
-    amount = r2(Math.min(parseBet(amount), debt));
-    const u = U();
-    if (amount > u.balance + 1e-9) throw new Error('Недостаточно средств');
-    u.balance = r2(u.balance - amount);
-    u.stats.helped = r2(u.stats.helped + amount);
-    repayLoans(f, amount);
-    momSay(f, 'helped', { amount: rub(amount) });
-    addFeed(`🦸 ${me} закрывает ${rub(amount)} долга ${to} перед мамой`, 'mom');
-    save(); pushUser(me); pushUser(to);
-    return { paid: amount };
-  });
-  on('job:start', ({ id }) => {
-    const J = JOBS[id];
-    if (!J) throw new Error('Нет такой работы');
-    const u = U();
-    if (u.job) throw new Error('Ты уже работаешь');
-    if (now() < (u.jobCd[id] || 0)) throw new Error('Эта работа ещё на перезарядке');
-    u.job = { id, startedAt: now(), endsAt: now() + J.secs * 1000 };
-    u.jobCd[id] = u.job.endsAt + J.cd * 1000;
-    save(); pushUser(me);
-  });
-  on('grandma', () => {
-    const u = U();
-    if (now() < u.grandmaAt + GRANDMA_CD) throw new Error('Бабушка спит, приходи позже');
-    const amount = 1000 + randInt(5) * 500;
-    u.grandmaAt = now();
-    u.balance = r2(u.balance + amount);
-    u.stats.grandma = r2(u.stats.grandma + amount);
-    addFeed(`👵 Бабушка дала ${me} ${rub(amount)} на мороженое`, 'win');
-    save(); pushUser(me);
-    return { amount };
-  });
 
   // ── читы (только для того, кто ввёл секретный код)
   const admin = () => { const u = db.users[me]; if (!u.admin) throw new Error('Неизвестная команда'); return u; };
@@ -1018,22 +702,9 @@ io.on('connection', (socket) => {
     u.balance = r2(Math.max(0, mode === 'set' ? v : u.balance + v));
     save(); pushUser(me);
   });
-  on('cheat:forgive', () => {
-    const u = admin();
-    for (const l of activeLoans(u)) { l.status = 'paid'; l.forgiven = true; l.paidAt = now(); l.owed = 0; }
-    save(); pushUser(me);
-  });
-  on('cheat:trust', () => { const u = admin(); u.trust = 100; save(); pushUser(me); });
-  on('cheat:cooldowns', () => {
-    const u = admin();
-    u.jobCd = {}; u.grandmaAt = 0;
-    if (u.job) u.job.endsAt = now();
-    save(); pushUser(me);
-  });
   on('cheat:toggle', ({ key, on: val }) => {
     const u = admin();
-    if (!['xray', 'crashSight', 'alwaysWin', 'topDrop', 'propBoost'].includes(key)) throw new Error('Нет такого чита');
-    if (key === 'propBoost') for (const p of u.props) accrue(me, p); // зафиксировать кассу по старой ставке
+    if (!['xray', 'crashSight', 'alwaysWin', 'topDrop'].includes(key)) throw new Error('Нет такого чита');
     u.cheats[key] = !!val;
     if (key === 'crashSight' && val && plane.phase === 'flying') cheatInfo(me, { plane: { round: plane.round, crash: plane.crash } });
     save(); pushUser(me); broadcastDuels();
@@ -1048,108 +719,29 @@ io.on('connection', (socket) => {
   on('profile:get', ({ name }) => {
     const u = db.users[String(name || '')];
     if (!u) throw new Error('Игрок не найден');
-    const place = Object.values(db.users).map(publicUser).sort((a, b) => b.net - a.net).findIndex((p) => p.name === u.name) + 1;
+    const place = Object.values(db.users).sort((a, b) => b.balance - a.balance).findIndex((p) => p.name === u.name) + 1;
     return {
       profile: {
         ...publicUser(u), place, total: Object.keys(db.users).length, createdAt: u.createdAt, lastLife: u.lastLife || null,
         stats: u.stats, history: u.history.slice(0, 20),
-        estate: u.props.map((p) => ({ type: p.type, level: p.level, state: p.state, tenant: p.tenant ? p.tenant.emoji : null })),
-        activeLoans: activeLoans(u).length,
       },
     };
-  });
-
-  // ── имущество
-  const myProp = (u, id) => {
-    const p = u.props.find((x) => x.id === Number(id));
-    if (!p) throw new Error('Объект не найден');
-    return p;
-  };
-  on('prop:buy', ({ type }) => {
-    const def = PROPS[type], u = U();
-    if (!def) throw new Error('Нет такого объекта');
-    if (u.props.length >= MAX_PROPS) throw new Error(`Не больше ${MAX_PROPS} объектов`);
-    if (momStage(u) >= 3) throw new Error('🔒 Домашний арест: мама не разрешает ничего покупать');
-    if (def.price > u.balance + 1e-9) throw new Error('Недостаточно средств');
-    u.balance = r2(u.balance - def.price);
-    u.stats.propSpent = r2(u.stats.propSpent + def.price);
-    const t = now();
-    const p = { id: u.propSeq++, type, level: 1, spent: 0, cash: 0, lastTick: t, nextCheck: t + MIN, boughtAt: t,
-      state: def.kind === 'flat' ? 'free' : 'working', tenant: null, rentUntil: 0, offers: null, offersAt: 0 };
-    u.props.push(p);
-    addFeed(`🏢 ${me} покупает ${def.emoji} «${def.name}» за ${rub(def.price)}`, 'win');
-    save(); pushUser(me);
-    return { id: p.id };
-  });
-  on('prop:offers', ({ id }) => {
-    const u = U(), p = myProp(u, id), def = PROPS[p.type];
-    if (def.kind !== 'flat') throw new Error('Бизнес не сдаётся');
-    if (p.state === 'rented') throw new Error('Квартира уже сдана');
-    if (p.offers && now() < p.offersAt + OFFERS_CD) throw new Error('Новые жильцы появятся чуть позже');
-    p.offers = genOffers(def); p.offersAt = now();
-    save(); pushUser(me);
-  });
-  on('prop:rent', ({ id, idx }) => {
-    const u = U(), p = myProp(u, id);
-    if (p.state === 'rented') throw new Error('Квартира уже сдана');
-    const o = p.offers && p.offers[clampInt(idx, 0, 2, 0)];
-    if (!o) throw new Error('Сначала найди жильцов');
-    const t = now();
-    p.state = 'rented'; p.tenant = { name: o.name, emoji: o.emoji, k: o.k, risk: o.risk };
-    p.rentUntil = t + o.mins * MIN; p.lastTick = t; p.nextCheck = t + MIN; p.offers = null;
-    save(); pushUser(me);
-  });
-  on('prop:evict', ({ id }) => {
-    const u = U(), p = myProp(u, id);
-    if (p.state !== 'rented') throw new Error('Там никто не живёт');
-    accrue(me, p); p.state = 'free'; p.tenant = null;
-    save(); pushUser(me);
-  });
-  on('prop:collect', ({ id }) => {
-    const u = U();
-    const list = id === 'all' ? u.props : [myProp(u, id)];
-    const r = collectProps(u, list);
-    if (!r.total) throw new Error('Касса пуста');
-    save(); pushUser(me);
-    return r;
-  });
-  on('prop:upgrade', ({ id }) => {
-    const u = U(), p = myProp(u, id), def = PROPS[p.type];
-    if (p.level >= maxLevel(def)) throw new Error('Уже максимальный уровень');
-    const cost = upgradeCost(def, p.level);
-    if (cost > u.balance + 1e-9) throw new Error('Недостаточно средств');
-    accrue(me, p);
-    u.balance = r2(u.balance - cost); u.stats.propSpent = r2(u.stats.propSpent + cost);
-    p.spent = r2(p.spent + cost); p.level++;
-    save(); pushUser(me);
-    return { level: p.level };
-  });
-  on('prop:sell', ({ id }) => {
-    const u = U(), p = myProp(u, id), def = PROPS[p.type];
-    const { total } = collectProps(u, [p]);
-    const price = sellPrice(p);
-    u.balance = r2(u.balance + price);
-    u.props = u.props.filter((x) => x !== p);
-    addFeed(`💼 ${me} продаёт ${def.emoji} «${def.name}» за ${rub(price)}`);
-    save(); pushUser(me);
-    return { price, cash: total };
   });
 
   // ── начать новую жизнь: свой прогресс с нуля
   on('life:restart', () => {
     const u = U();
     if (activeDuelOf(me)) throw new Error('Сначала доиграй или отмени дуэль');
-    if (minesSolo[me] || towersSolo[me]) throw new Error('Сначала закончи текущую игру в минах или башнях');
+    if (minesSolo[me] || towersSolo[me] || football[me]) throw new Error('Сначала закончи текущую игру (мины, башни или футбол)');
     if (plane.bets[me] && !plane.bets[me].cashedAt && plane.phase !== 'crashed') throw new Error('Дождись конца раунда самолётика');
     if (roul.phase !== 'result' && roul.bets.some((b) => b.name === me)) throw new Error('Дождись конца раунда рулетки');
     if (casePending.get(me) > 0) throw new Error('Дождись, пока докрутится кейс');
-    const prev = { net: r2(u.balance - debtOf(u) + assetsOf(u)), debt: debtOf(u), endedAt: now(), life: u.lives };
-    const keep = { name: u.name, token: u.token, createdAt: u.createdAt, grandmaAt: u.grandmaAt, lives: u.lives + 1, lastLife: prev, admin: u.admin, cheats: u.cheats };
+    const prev = { net: u.balance, endedAt: now(), life: u.lives };
+    const keep = { name: u.name, token: u.token, createdAt: u.createdAt, lives: u.lives + 1, lastLife: prev, admin: u.admin, cheats: u.cheats };
     for (const k of Object.keys(u)) delete u[k];
     Object.assign(u, keep);
     withDefaults(u);
-    momSay(u, 'newLife');
-    addFeed(`♻️ ${me} начинает новую жизнь №${u.lives}. Прошлая закончилась с капиталом ${rub(prev.net)}${prev.debt ? ` и долгом маме ${rub(prev.debt)}` : ''}`, 'refill');
+    addFeed(`♻️ ${me} начинает новую жизнь №${u.lives}`, 'refill');
     save(); pushUser(me);
     return { lives: u.lives };
   });
@@ -1183,6 +775,45 @@ io.on('connection', (socket) => {
     if (win && mult >= 10) addFeed(`🎲 ${me}: ×${mult} в костях → +${rub(payout)}`, 'win');
     return { roll, win, mult, payout, taken };
   });
+
+  // ── футбол
+  on('football:start', ({ bet, diff }) => {
+    if (football[me]) throw new Error('Серия уже идёт');
+    if (!FB_DIFF[diff]) throw new Error('Неизвестная сложность');
+    bet = parseBet(bet);
+    placeBet(me, bet, 'football');
+    football[me] = { bet, diff, kicks: [], next: pickDistinct(FB_ZONES, FB_DIFF[diff].keeper) };
+    return { state: fbView(me) };
+  });
+  on('football:kick', ({ zone }) => {
+    const s = football[me];
+    if (!s) throw new Error('Серия не начата');
+    zone = clampInt(zone, 0, FB_ZONES - 1, 0);
+    let covered = s.next;
+    if (cheatOn(me, 'alwaysWin') && covered.includes(zone)) { // вратарь «не угадывает»
+      covered = pickDistinct(FB_ZONES, FB_ZONES).filter((z) => z !== zone).slice(0, covered.length);
+    }
+    if (covered.includes(zone)) {
+      delete football[me];
+      settle(me, 'football', s.bet, 0);
+      return { saved: true, zone, covered, kicks: s.kicks };
+    }
+    s.kicks.push({ zone, covered });
+    s.next = pickDistinct(FB_ZONES, FB_DIFF[s.diff].keeper);
+    if (s.kicks.length === FB_KICKS) return { goal: true, zone, covered, ...finishFootball() };
+    return { goal: true, zone, covered, state: fbView(me) };
+  });
+  function finishFootball() {
+    const s = football[me];
+    if (!s) throw new Error('Серия не начата');
+    if (!s.kicks.length) throw new Error('Забей хотя бы один гол');
+    const mult = fbMult(s.diff, s.kicks.length);
+    const win = r2(s.bet * mult);
+    delete football[me];
+    settle(me, 'football', s.bet, win, mult);
+    return { cashout: true, win, mult, kicks: s.kicks };
+  }
+  on('football:cashout', finishFootball);
 
   // ── мины соло
   on('mines:start', ({ bet, mines }) => {
@@ -1322,7 +953,6 @@ io.on('connection', (socket) => {
     config = config || {};
     let cfg = {};
     if (game === 'mines') cfg = { mines: clampInt(config.mines, 1, 24, 5) };
-    if (game === 'crash') cfg = { blind: config.blind === true || config.blind === 'true' || config.blind === '1' };
     if (game === 'coin') cfg = { side: config.side === 'tails' ? 'tails' : 'heads' };
     if (game === 'towers') { if (!TOWER_DIFF[config.diff]) throw new Error('Неизвестная сложность'); cfg = { diff: config.diff }; }
     if (game === 'cases') {
@@ -1355,20 +985,6 @@ io.on('connection', (socket) => {
     d.players.push(me);
     startDuel(d);
     broadcastDuels();
-  });
-  on('duel:cashout', ({ id }) => {
-    const d = myDuel(me, id, 'crash');
-    const s = d.state;
-    if (s.cash[me]) throw new Error('Уже выведено');
-    const el = now() - s.startAt;
-    if (el < 0) throw new Error('Раунд ещё не начался');
-    const m = multAt(el);
-    if (m >= s.crash) throw new Error('Поздно — краш!');
-    s.cash[me] = m;
-    const [a, b] = d.players;
-    if (s.cash[a] && s.cash[b]) settleDuel(d, { [a]: s.cash[a], [b]: s.cash[b] });
-    else broadcastDuels();
-    return { mult: m };
   });
   on('duel:mines:open', ({ id, cell }) => {
     const d = myDuel(me, id, 'mines');
@@ -1420,7 +1036,6 @@ io.on('connection', (socket) => {
   });
 });
 
-setInterval(momTick, 2000);
 planeBetting();
 roulBetting();
 save();
